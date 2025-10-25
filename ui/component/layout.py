@@ -1,5 +1,4 @@
 # ui/layout.py
-from __future__ import annotations
 import streamlit as st
 from typing import List, Optional
 from ui.component.intro import intro

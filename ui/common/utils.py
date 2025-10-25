@@ -1,7 +1,4 @@
-import mimetypes
-import os
 from typing import List
-import boto3
 import streamlit as st
 import streamlit.components.v1 as components
 from manager.session_store import SessionStore

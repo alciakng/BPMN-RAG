@@ -1,7 +1,5 @@
 # services/llm_client.py
 from __future__ import annotations
-import os
-import json
 from common.logger import Logger
 from typing import Dict, Optional, List
 from openai import OpenAI

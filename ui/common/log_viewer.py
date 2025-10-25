@@ -7,7 +7,6 @@ import time
 import queue
 import threading
 import logging
-from contextlib import redirect_stdout, redirect_stderr
 from typing import Any, Callable, Iterable, Optional
 
 import streamlit as st

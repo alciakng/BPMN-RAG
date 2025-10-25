@@ -1,5 +1,3 @@
-# uploader.py (수정된 부분만)
-from __future__ import annotations
 
 import json
 import os
