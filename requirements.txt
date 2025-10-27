@@ -1,5 +1,5 @@
 boto3==1.40.23
-bpmn2neo==0.1.7
+bpmn2neo==0.1.8
 neo4j==6.0.2
 openai==2.6.1
 redis==7.0.0
