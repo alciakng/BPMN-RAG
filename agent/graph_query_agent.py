@@ -20,8 +20,6 @@ from typing import Any, Dict, List, Optional
 from bpmn2neo import load_and_embed, load_bpmn_to_neo4j # your library
 from bpmn2neo.settings import Settings
 
-
-
 LOGGER = Logger.get_logger("agent.graph_query_agent")
 
 class GraphQueryAgent:
@@ -74,8 +72,8 @@ class GraphQueryAgent:
         try:
             
             s = Settings(container=container_settings, neo4j= self.neo4j_settings,openai=self.openai_settings)
-            modelkey = load_and_embed(bpmn_path=file_path, model_key=filename, settings=s,mode='light')
-            LOGGER.info("[AGENT] bpmn loaded filename= %s, modelKey=%s", filename, modelkey['model_key'])
+            modelkey = load_and_embed(bpmn_path=file_path, model_key=filename, settings=s, mode='light')
+            LOGGER.info("[AGENT] bpmn load_and_embed filename= %s, modelKey=%s", filename, modelkey['model_key'])
 
             return {"model_key": modelkey['model_key'], "model_name": filename}
         except Exception as e:
@@ -88,8 +86,8 @@ class GraphQueryAgent:
         """
         try:
             s = Settings(container=container_settings, neo4j= self.neo4j_settings,openai=self.openai_settings)
-            modelkey = load_bpmn_to_neo4j(bpmn_path=file_path, model_key=filename,settings=s)
-            LOGGER.info("[AGENT] bpmn loaded filename= %s, modelKey=%s", filename, modelkey)
+            modelkey = load_bpmn_to_neo4j(bpmn_path=file_path, model_key=filename, settings=s)
+            LOGGER.info("[AGENT] bpmn load filename= %s, modelKey=%s", filename, modelkey)
 
             return {"model_key": modelkey, "model_name": filename}
         except Exception as e:
@@ -128,7 +126,7 @@ class GraphQueryAgent:
             self,
             user_query: str,
             uploaded_model_key: Optional[str] = None,
-            chat_history: Optional[List[Dict[str, Any]]] = None,  # NEW: prior Q/A context
+            chat_history: Optional[List[Dict[str, Any]]] = None,  
         ) -> str:
             """
             Generate final answer using structured payload + prior chat history.
@@ -148,22 +146,48 @@ class GraphQueryAgent:
                 LOGGER.info("[03.CTX] payload blocks built")
 
                 # 2) Compose messages for LLM
-                SYS_PROMPT_4O = """You are a BPMN/Neo4j Graph-RAG Expert and a senior Process Innovation Consultant.
-                                GOALS
+                SYS_PROMPT_4O = """
+                                [GOALS]
                                 - If `upload_model_context` exists: primary goal = compare each model in `model_context` vs `upload_model_context` and propose concrete improvements for the uploaded model.
                                 - If `upload_model_context` is absent: primary goal = explain the user query with per-model sections using only `model_context`.
-                                ROLE & INTENT
-                                - Act as a senior process innovation consultant with deep domain expertise in the model currently being analyzed. Your goal is to diagnose comprehensive risk, and prescribe practical, high-leverage improvements.
-                                KPI Orientation
-                                - Tie recommendations to measurable effects (e.g., “reduce lead time 15–25% by removing one handoff; improve first-time-right by naming gateways and adding receipt ACK”).
-                                - separate the improvement effect into separate sections with table.
-                                STYLE
-                                - Prefer tables and numbered sections & bullet points.
-                                - Korean only. Do not invent facts outside payload. If info is missing, say so.
+
+                                [ROLE]
+                                - Act as a BPMN/Neo4j Graph-RAG expert and senior Process Innovation Consultant.
+                                - Precisely infer the query intent and deliver an accurate answer strictly grounded in the payload.
+                                
+                                [OPTIONAL — USE ONLY IF QUERY-RELEVANT]
+
+                                - Problem Diagnosis Table (suggest using a table):
+                                Propose a compact table summarizing key issues and evidence.
+                                Format: | Issue/Risk | Evidence (IDs, node names) | Impact Area (e.g., lead time/quality/compliance) | Severity (H/M/L) | one-line Solution |
+
+                                - Improvements & Effects Table:
+                                Propose only if the query requires or implies recommendations and quantified effects.
+                                For each item include: Action, KPI, baseline → target, expected delta (%), one-line mechanism, risks/assumptions.
+                                Example: “lead time ↓15–25% by removing one handoff; first-time-right ↑10–15% by naming gateways + adding receipt ACK”.
+                                If KPIs or data are insufficient, state it briefly and omit quantification.
+                                
+                                [RULES]
+                                - Use only the payload; if something is missing, say so and propose the minimal patch to collect it.
+                                - `short_history` is reference-only. Do NOT reuse any previous answer verbatim.
+
+                                [STYLE]
+                                - Korean only.
+                                - Prefer numbered sections, bullet points, and tables. Use bold for extra emphasis.
+                                - MUST wrap domain terms in inline code (backticks): process/lane/task/data-object/role-title/system names.
+                                Examples: `Bank Branch (Front Office)`, `Underwriter`, `credit scoring (bank)`, `request credit score`.
+                                limit to 1–3 inline highlights per sentence.
+
+                                [PAYLOAD SCHEMA] (shared by upload_model_context & model_context)
+                                {model:{id,name,modelKey,properties}, participants:[{id,name,properties,
+                                processes:[{id,name,modelKey, lanes:[{id,name,properties,flownodes:[{id,name}]}],
+                                nodes_all:[{id,name,properties,full_context}], message_flows:[], data_reads:[], data_writes:[],
+                                annotations:[], groups:[], lane_handoffs:[], paths_all:[]}
+                                ]}]}
                                 """
 
                 # keep chat history short for prompt budget
-                short_history = (chat_history or [])[-7:]
+                short_history = (chat_history or [])[-3:]
 
                 def _build_messages(user_query,  selected_models, uploaded_model_key, payload_blocks, short_history):
                     return [

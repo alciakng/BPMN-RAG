@@ -1,5 +1,7 @@
 # services/llm_client.py
 from __future__ import annotations
+import os
+import json
 from common.logger import Logger
 from typing import Dict, Optional, List
 from openai import OpenAI
@@ -25,11 +27,11 @@ class LLMClient:
         try:
             if self._client:
                 resp = self._client.chat.completions.create(
-                    model="gpt-4o",              
+                    model="gpt-4.1",              
                     messages=messages,
                     temperature=0.2,            
                     top_p=1,      
-                    max_tokens=3000,
+                    max_tokens=2500,
                     presence_penalty=0,
                     frequency_penalty=0,
                     # response_format={"type": "text"},  # 필요시 명시
@@ -38,9 +40,37 @@ class LLMClient:
                 LOGGER.info("[LLM] finish_reason=%s out_len=%d", getattr(resp.choices[0], "finish_reason", None), len(text))
                 return text
         except Exception as e:
+            msg = str(e).lower()
+            # Detect 429 & suggested wait sec
+            if "rate limit" in msg or "429" in msg:
+                import re, time, random
+                wait = None
+                m = re.search(r"try again in ([0-9.]+)s", str(e), flags=re.I)
+                if m:
+                    try: wait = float(m.group(1))
+                    except Exception: wait = None
+                if wait is None: wait = 6.0
+                wait += random.uniform(0.0, 0.4)
+                LOGGER.warning("[LLM][429] sleep %.2fs then retry", wait)
+                time.sleep(wait)
+
+                # degrade: compact prompt more, switch model & shrink tokens
+                try:
+                    resp = self._client.chat.completions.create(
+                        model="gpt-4.1-mini",   # lighter model
+                        messages=messages,
+                        temperature=0.2,
+                        top_p=1,
+                        max_tokens=1024,        # smaller again
+                    )
+                    text = resp.choices[0].message.content or ""
+                    LOGGER.info("[LLM][retry-mini] out_len=%d", len(text))
+                    return text
+                except Exception as e2:
+                    LOGGER.exception("[LLM][retry-mini] failed: %s", e2)
+
             LOGGER.exception("[LLM] complete failed: %s", e)
-            err_full = f"{type(e).__name__}: {e}"
-            return err_full
+            return f"{type(e).__name__}: {e}"
 
     def query_embed(self, text: str) -> List[float]:
         """

@@ -8,6 +8,7 @@ from bpmn2neo.settings import ContainerSettings
 
 
 from common.logger import Logger
+from analytics import track
 from ui.app.handler import derive_candidates, answer_with_selected, ingest_and_register_bpmn
 from ui.component.panels import render_candidates_selector
 from ui.component.chat_input_module import render_chat_input_box
@@ -75,6 +76,52 @@ def _render_input() -> None:
     
     st.rerun()
 
+def _render_graph() -> None:
+    """
+    Render the graph section when at least one model key is present.
+    - Reads session context from Streamlit's st.session_state
+    - Collects model keys via _collect_model_keys(session_store, session_id)
+    - Renders a graph panel inside an expander
+    """
+    try:
+        # Log start of rendering step
+        LOGGER.info("[GRAPH][RENDER] start")
+
+        # 1) Read session context
+        session_store = st.session_state.get("session_store")
+        session_id = st.session_state.get("session_id")
+        LOGGER.info(
+            "[GRAPH][RENDER] session context loaded store=%s, session_id=%s",
+            "present" if session_store is not None else "None",
+            session_id if session_id is not None else "None",
+        )
+
+        # 2) Collect model keys (guard against None)
+        try:
+            model_keys = _collect_model_keys(session_store, session_id)
+            count = len(model_keys) if model_keys else 0
+            LOGGER.info("[GRAPH][RENDER] collected model_keys count=%d", count)
+        except Exception as e:
+            # Explicitly log collection failure without stopping the outer flow
+            LOGGER.exception("[GRAPH][RENDER][ERROR] collect model_keys failed: %s", e)
+            return
+
+        # 3) Render only when keys exist
+        if model_keys and len(model_keys) > 0:
+            try:
+                with st.expander(label="모델 Graph Flow Diagram"):
+                    render_graph_with_selector(model_keys)
+                LOGGER.info("[GRAPH][RENDER] graph rendered successfully")
+            except Exception as e:
+                # Log render failure with traceback
+                LOGGER.exception("[GRAPH][RENDER][ERROR] graph render failed: %s", e)
+        else:
+            LOGGER.info("[GRAPH][RENDER] no model keys; skip rendering")
+
+    except Exception as e:
+        # Fatal guard for unexpected errors
+        LOGGER.exception("[GRAPH][RENDER][FATAL] %s", e)    
+
 def _has_pending() -> bool:
     """
     Check if there's a pending selector in message history.
@@ -109,55 +156,54 @@ def _do_task() -> None:
         session_store = st.session_state.get("session_store")
         session_id = st.session_state.get("session_id")
 
-        modelKeys = _collect_model_keys(session_store, session_id)
-        render_graph_with_selector(modelKeys)
+        _render_graph()
 
         for idx, msg in enumerate(st.session_state.messages):
             role = msg["role"]
             if role =="derive_candidates":
-                # Derive candidates(if selected_model is none)
-                query = st.session_state.get("last_user_query", "")
-                try:
-                    LOGGER.info("[CHAT] Deriving candidates")
-                    res = derive_candidates(user_query=query)
-                    
-                    candidates = res.get("candidates") or []
-                    
-                    LOGGER.info(
-                        "[CHAT] Candidates derived len_candidates:%d",len(candidates)
-                    )
+                with st.spinner("질의대상 프로세스 후보 검색 중..."):
+                    # Derive candidates(if selected_model is none)
+                    query = st.session_state.get("last_user_query", "")
+                    try:
+                        LOGGER.info("[CHAT] Deriving candidates")
+                        res = derive_candidates(user_query=query)
+                        
+                        candidates = res.get("candidates") or []
+                        
+                        LOGGER.info(
+                            "[CHAT] Candidates derived len_candidates:%d",len(candidates)
+                        )
 
-                    if not candidates:
-                        # No candidates found
+                        if not candidates:
+                            # No candidates found
+                            st.session_state.messages.append({
+                                "role": "ai",
+                                "content": "해당 질의에 대응되는 후보모델이 적재되지 않았습니다. 관리자에게 분석대상 .bpmn 프로세스 적재를 문의하세요."
+                            })
+                            st.rerun()
+                        else:
+                            st.session_state.messages.pop(idx)
+                            # Add selector message to history
+                            st.session_state.messages.append({
+                                "role": "selector",
+                                "candidates": candidates
+                            })
+                            st.session_state.trigger_generate = True
+                            
+                            # Rerun to show selector in chat
+                            st.rerun()
+
+                    except Exception as derive_err:
+                        LOGGER.exception(
+                            "[CHAT] Candidate derivation failed: %s",
+                            str(derive_err),
+                            extra={"session_id": session_id, "query": query}
+                        )
                         st.session_state.messages.append({
                             "role": "ai",
-                            "content": "해당 질의에 대응되는 후보모델이 적재되지 않았습니다. 관리자에게 분석대상 .bpmn 프로세스 적재를 문의하세요."
+                            "content": "Failed to process query. Please try again."
                         })
                         st.rerun()
-                    else:
-                        st.session_state.messages.pop(idx)
-                        # Add selector message to history
-                        st.session_state.messages.append({
-                            "role": "selector",
-                            "candidates": candidates
-                        })
-                        st.session_state.trigger_generate = True
-                        
-                        # Rerun to show selector in chat
-                        st.rerun()
-
-                except Exception as derive_err:
-                    LOGGER.exception(
-                        "[CHAT] Candidate derivation failed: %s",
-                        str(derive_err),
-                        extra={"session_id": session_id, "query": query}
-                    )
-                    st.session_state.messages.append({
-                        "role": "ai",
-                        "content": "Failed to process query. Please try again."
-                    })
-                    st.rerun()
-                
             elif role == "selector":
                 with st.chat_message("ai"):
                     candidates = msg.get("candidates", [])
@@ -191,8 +237,7 @@ def _do_task() -> None:
                         st.rerun()
                     return
             elif role == "uploader":
-                with st.chat_message("ai"):
-                    st.write("업로드 파일 분석중...")
+                with st.spinner("업로드 파일 분석중..."):
                     uploaded_file = msg.get("uploaded_file", [])
                     query = msg.get("query", [])
                     upload_info = _process_uploaded_file(uploaded_file, session_id)
@@ -207,13 +252,16 @@ def _do_task() -> None:
                         )
 
                         st.session_state.messages.pop(idx)
+                        st.success(
+                            f"업로드 완료: {upload_info.get('model_name')} "
+                            f"(ID: {upload_info.get('model_key')})"
+                        )
                         st.session_state.messages.append({"role": "user", "content": query})
                         st.session_state.last_user_query = query
                         st.session_state.trigger_generate = True
                         st.rerun()
             elif role == "answer" :
-                with st.chat_message("ai"):
-                    st.write("답변 생성 중...")
+                with st.spinner("답변 생성 중..."):
                     answer_text = answer_with_selected()
 
                     if answer_text:
@@ -315,10 +363,6 @@ def _process_uploaded_file(uploaded_file, session_id: str) -> Optional[Dict]:
     
         # Handle result
         if upload_info.get("model_key"):
-            st.success(
-                f"업로드 완료: {upload_info.get('model_name')} "
-                f"(ID: {upload_info.get('model_key')})"
-            )
             
             LOGGER.info(
                 "[CHAT] File ingestion successful",
@@ -382,18 +426,18 @@ def handle_agent_response() -> None:
             "Guide 메뉴를 참고하여 질의를 수행하여 주십시오."
         )
         # Check if selector is pending - if so, hide input box
-        has_pending = _has_pending()
+        has_pending = _has_pending()     
 
         # Render history (including selector if present)
         _do_task()
-        
+
         if has_pending:
             LOGGER.info("[CHAT] Selector pending, hiding input box")
             trigger_generate = st.session_state.trigger_generate
             LOGGER.info("[CHAT] Trigger generate : %s", str(trigger_generate))
             # Don't render input box while selector is active
             return
-
+        
         # Verify the `trigger_generate` state set at query submission.
         # Check whether `trigger_generate` (armed on user query) is active.
         if st.session_state.pop("trigger_generate", False):

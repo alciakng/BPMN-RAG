@@ -130,16 +130,27 @@ class Reader:
             "id","name","properties",
             "processes": [
                 {
-                "id","name","properties",
-                "full_context": {...},
+                "id",
+                "name",
+                "modelKey",
                 "lanes": [
                     {
                     "id","name","properties",
-                    "flownodes": [{"id","name","properties"}]
+                    "flownodes": [{"id","name"}]
                     }, ...
                 ],
-                "flownodes": [{"id","name","properties"}]  # nodes owned directly by the process
-                }, ...
+                "nodes_all": [
+                    {
+                    "id","name","properties",
+                    "full_context",
+                ],
+                "message_flows": [],
+                "data_reads": [],
+                "data_writes": [],
+                "annotations": [],
+                "groups": [],
+                "lane_handoffs": [],
+                "paths_all": []
             ]
             }, ...
         ]
@@ -273,7 +284,8 @@ class Reader:
                 except Exception:
                     logger.exception("[UPLOAD_CTX][PROC] meta failed pid=%s", pid)
                     meta = {}
-
+                    
+                
                 # 2) lanes (id, name, properties) and lane->node ids
                 try:
                     q_lanes_ids = """
@@ -291,6 +303,7 @@ class Reader:
                 except Exception:
                     logger.exception("[UPLOAD_CTX][PROC] lanes failed pid=%s", pid)
                     lanes = []
+                
 
                 # 3) all node ids (lane-owned + process-owned)
                 try:
@@ -553,7 +566,8 @@ class Reader:
                     main_paths = []
 
                 ctx = {
-                    "meta": meta,
+                    "id": meta['id'],
+                    "name":meta['name'],
                     "lanes": lanes,
                     "nodes_all": nodes_all,
                     "sequence_flows": seq_flows,
@@ -563,7 +577,7 @@ class Reader:
                     "annotations": annotations,
                     "groups": groups,
                     "lane_handoffs": lane_handoffs,
-                    "paths_all": {"main_paths": main_paths},
+                    "paths_all": main_paths,
                 }
                 return ctx
             except Exception:
@@ -586,26 +600,20 @@ class Reader:
                 logger.info("[UPLOAD_CTX] participant id=%s processes=%d", pt_obj["id"], len(proc_list))
                 for p in proc_list:
                     pid = p.get("id")
-                    pname = p.get("name")
+                    #pname = p.get("name")
 
                     # lanes -> flownodes
-                    lanes = _lanes_for_process(model_key,pid)
-                    for ln in lanes:
-                        ln["flownodes"] = _flownodes_for_lane(model_key,ln["id"])
+                    #lanes = _lanes_for_process(model_key,pid)
+                    #for ln in lanes:
+                    #    ln["flownodes"] = _flownodes_for_lane(model_key,ln["id"])
 
                     # process-owned flownodes (no lane)
-                    flownodes_no_lane = _process_owned_flownodes(model_key,pid)
+                    # flownodes_no_lane = _process_owned_flownodes(model_key,pid)
 
                     # full context for process
                     full_ctx = _full_process_context(model_key,pid)
 
-                    pt_obj["processes"].append({
-                        "id": pid,
-                        "name": pname,
-                        "full_context": full_ctx,
-                        "lanes": lanes,
-                        "flownodes_no_lane": flownodes_no_lane
-                    })
+                    pt_obj["processes"].append(full_ctx)
 
                 participants.append(pt_obj)
 
