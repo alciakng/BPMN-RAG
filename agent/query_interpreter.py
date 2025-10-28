@@ -30,7 +30,7 @@ class QueryInterpreter:
         reader: Reader,
         logger: Optional[logging.Logger] = None,
         top_k_nodes_per_model: int = 10,
-        top_n_models: int = 5,
+        top_n_models: int = 100,
         wc: float = 0.45,
         wb: float = 0.40,
         wd: float = 0.15,

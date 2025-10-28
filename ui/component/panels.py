@@ -180,15 +180,18 @@ def render_candidates_selector(
                 st.success("질의에 매칭되는 후보모델을 식별하였습니다. 분석을 진행할 모델을 선택하세요. (복수선택 가능)")
                 st.write("")
 
+                list_height = 320
                 # Checkbox list
-                for mk, label in zip(model_keys, labels):
-                    ckey = f"{ns}_chk_{mk}"
-                    checked = mk in st.session_state[selected_state_key]
-                    new_val = st.checkbox(label, key=ckey, value=checked)
-                    if new_val:
-                        st.session_state[selected_state_key].add(mk)
-                    else:
-                        st.session_state[selected_state_key].discard(mk)
+                with st.container(height=list_height, border=True):
+                    # Checkbox list
+                    for mk, label in zip(model_keys, labels):
+                        ckey = f"{ns}_chk_{mk}"
+                        checked = mk in st.session_state[selected_state_key]
+                        new_val = st.checkbox(label, key=ckey, value=checked)
+                        if new_val:
+                            st.session_state[selected_state_key].add(mk)
+                        else:
+                            st.session_state[selected_state_key].discard(mk)
 
 
                 if st.button("✓ 확인", key=f"{ns}_ok", type="primary", use_container_width=True):
