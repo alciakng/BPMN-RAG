@@ -67,9 +67,10 @@ def ingest_and_register_bpmn(
             ctype = None
 
         ctype_str = (str(ctype).strip().lower()) if ctype is not None else None
-        embed = (ctype_str == "bp")
+        #embed = (ctype_str == "bp")
         persist = (ctype_str == "upd")
 
+        """
         if embed: 
             # Ingest & index
             info = ag.ingest_and_index_bpmn(
@@ -84,6 +85,13 @@ def ingest_and_register_bpmn(
                 filename=filename,
                 container_settings=container_settings,
             ) or {}
+        """
+
+        info = ag.ingest_bpmn(
+            file_path=file_path,
+            filename=filename,
+            container_settings=container_settings,
+        ) or {}
 
         model_key = info.get("model_key")
         model_name = info.get("model_name")

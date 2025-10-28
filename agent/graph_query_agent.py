@@ -174,6 +174,7 @@ class GraphQueryAgent:
                                 [STYLE]
                                 - Korean only.
                                 - Prefer numbered sections, bullet points, and tables. Use bold for extra emphasis.
+                                - Do not use HTML (no tags or inline CSS). Prefer pure Markdown for all formatting.
                                 - MUST wrap domain terms in inline code (backticks): process/lane/task/data-object/role-title/system names.
                                 Examples: `Bank Branch (Front Office)`, `Underwriter`, `credit scoring (bank)`, `request credit score`.
                                 limit to 1–3 inline highlights per sentence.

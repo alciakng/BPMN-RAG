@@ -27,7 +27,7 @@ class LLMClient:
         try:
             if self._client:
                 resp = self._client.chat.completions.create(
-                    model="gpt-4.1",              
+                    model="gpt-4.1-mini",              
                     messages=messages,
                     temperature=0.2,            
                     top_p=1,      
