@@ -79,7 +79,7 @@ class LLMClient:
         """
         try:
             if self._client:
-                er = self._client.embeddings.create(model="text-embedding-3-large", input=[text])
+                er = self._client.embeddings.create(model="text-embedding-3-small", input=[text])
                 vec = er.data[0].embedding
                 # Ensure float list
                 return [float(x) for x in vec]
