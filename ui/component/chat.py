@@ -174,6 +174,7 @@ def _do_task() -> None:
                         )
 
                         if not candidates:
+                            st.session_state.messages.pop(idx)
                             # No candidates found
                             st.session_state.messages.append({
                                 "role": "ai",

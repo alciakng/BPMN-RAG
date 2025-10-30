@@ -58,7 +58,7 @@ class GraphQueryAgent:
         db  = st.secrets["NEO4J_DATABASE"]
         api_key  = st.secrets["OPENAI_API_KEY"]
 
-        self.openai_settings = OpenAISettings(api_key=api_key)
+        self.openai_settings = OpenAISettings(api_key=api_key, embedding_model='text-embedding-3-small')
         self.neo4j_settings = Neo4jSettings(uri=uri,username=user,password=pwd,database=db)
         
 

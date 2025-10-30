@@ -12,7 +12,7 @@ import streamlit as st
 from agent.graph_query_agent import GraphQueryAgent
 from manager.session_store import SessionStore
 from bpmn2neo.settings import ContainerSettings 
-from ui.app.handler import fetch_graph_for_tabs, ingest_and_register_bpmn, handle_image_upload_to_s3
+from ui.app.handler import ingest_and_register_bpmn, handle_image_upload_to_s3
 from ui.common.log_viewer import LiveLogPanel
 from ui.component.agraph import render_graph_with_selector  # Import new graph module
 
