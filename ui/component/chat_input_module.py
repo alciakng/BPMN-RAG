@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Optional, Tuple
 
 import streamlit as st
-from ui.app.handler import reset_uploaded_model
+from ui.app.handler import reset_history, reset_uploaded_model
 from common.logger import Logger
 
 from streamlit_extras.bottom_container import bottom
@@ -87,6 +87,7 @@ def render_chat_input_box(
                         uploaded_file = prompt["files"][0]
                         if uploaded_models :
                             reset_uploaded_model()
+                            reset_history()
 
                     submitted = True
 
