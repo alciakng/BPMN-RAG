@@ -8,6 +8,7 @@ from ui.component.chat import handle_agent_response
 from common.logger import Logger
 from ui.component.panels import render_selected_models_sidebar
 from streamlit_option_menu import option_menu
+from streamlit_extras.bottom_container import bottom
 
 
 # Module-level structured logger (no class in UI module)
@@ -43,6 +44,7 @@ def render_app_layout(title_text: str) -> None:
         # Top-right overlay: read-only state of current selections
         # If selected_models is None or empty, the overlay shows 'No selection'.
         render_selected_models_sidebar()
+        
         
     except Exception as e:
         LOGGER.exception("[UI][LAYOUT] render_app_layout failed: %s", e)

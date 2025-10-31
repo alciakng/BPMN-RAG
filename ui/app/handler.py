@@ -86,7 +86,7 @@ def ingest_and_register_bpmn(
                 container_settings=container_settings,
             ) or {}
         """
-
+        # Ingest
         info = ag.ingest_bpmn(
             file_path=file_path,
             filename=filename,
@@ -122,7 +122,6 @@ def ingest_and_register_bpmn(
     except Exception as e:
         LOGGER.exception("[HANDLER][INGEST][ERROR] %s", str(e))
         return {"model_key": None, "model_name": None}
-
 
 # ----------------------------- Candidates ------------------------------
 def derive_candidates(user_query: str) -> Dict[str, Any]:
@@ -208,6 +207,45 @@ def answer_with_selected() -> str:
 
 
 # ------------------------------ Reset/Clear ----------------------------
+def reset_history() -> None:
+    """
+    Clear only the chat history of the current analysis.
+    Behavior:
+      - If model/analysis exists: clear history and notify user.
+      - If no current analysis: log warning and notify user.
+      - On any error: log exception; best-effort user notice via system_notice.
+    """
+    try:
+        session_store = _get_session_store()
+        session_id = _get_session_id()
+
+        cur_analysis = session_store.get_current_analysis(session_id)
+        if not cur_analysis:
+            LOGGER.warning("[HANDLER][RESET_HISTORY] no current analysis for session %s", session_id)
+            return
+
+        # Clear chat history for the current analysis
+        session_store.clear_history(session_id, cur_analysis)
+        LOGGER.info(
+            "[HANDLER][RESET_HISTORY] cleared history for session %s analysis %s",
+            session_id, cur_analysis
+        )
+
+        # Push an AI message into chat history
+        try:
+            st.session_state.messages.append({
+                "role": "ai",
+                "content": "대화 기록이 초기화되었습니다. 계속 진행하려면 메시지를 입력하세요."
+            })
+        except Exception as ee:
+            LOGGER.exception("[HANDLER][RESET_HISTORY][HISTORY][ERROR] %s", ee)
+            st.session_state.system_notice = "대화 기록이 초기화되었습니다."
+
+    except Exception as e:
+        LOGGER.exception("[HANDLER][RESET_HISTORY][ERROR] %s", e)
+
+
+
 def reset_candidates() -> None:
     """
     Clear selected models, delete current analysis and its history,
@@ -274,6 +312,7 @@ def handle_image_upload_to_s3(image_bytes: bytes, filename: str) -> Tuple[str, s
         LOGGER.exception("[UPLOAD][IMG][ERROR] %s", e)
         raise
 
+    
 def fetch_graph_for_tabs(model_key: str) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     """
     Fetch graph datasets for 4 tabs via Reader.
@@ -286,19 +325,46 @@ def fetch_graph_for_tabs(model_key: str) -> Dict[str, Dict[str, List[Dict[str, A
         }
     """
     reader = _get_reader()
+    key_primary = model_key or "default"
 
     try:
-        LOGGER.info("[UPLOAD][GRAPH] fetch graphs model_key=%s", model_key)
-        overall = reader.get_overall_process_graph(model_key)
-        message = reader.get_message_exchange_graph(model_key)
-        subprocess = reader.get_subprocess_graph(model_key)
-        dataio = reader.get_data_io_graph(model_key)
+        LOGGER.info("[UPLOAD][GRAPH] fetch graphs model_key=%s", key_primary)
+
+        # Try with primary key
+        overall = reader.get_overall_process_graph(key_primary)
+
+        # Fallback condition #2: overall is missing/empty → retry with 'default'
+        if not overall and key_primary != "default":
+            LOGGER.warning("[UPLOAD][GRAPH] overall empty for key=%s; retry with 'default'", key_primary)
+            key_primary = "default"
+            
+        overall = reader.get_overall_process_graph(key_primary)
+        message = reader.get_message_exchange_graph(key_primary)
+        subprocess = reader.get_subprocess_graph(key_primary)
+        dataio = reader.get_data_io_graph(key_primary)
+
         return {
             "overall": overall,
             "message": message,
             "subprocess": subprocess,
             "dataio": dataio,
         }
+
     except Exception as e:
+        # Fallback condition #3: any error → retry with 'default'
         LOGGER.exception("[UPLOAD][GRAPH][ERROR] %s", e)
-        raise
+        try:
+            LOGGER.info("[UPLOAD][GRAPH] fallback to 'default'")
+            overall = reader.get_overall_process_graph("default")
+            message = reader.get_message_exchange_graph("default")
+            subprocess = reader.get_subprocess_graph("default")
+            dataio = reader.get_data_io_graph("default")
+            return {
+                "overall": overall,
+                "message": message,
+                "subprocess": subprocess,
+                "dataio": dataio,
+            }
+        except Exception as e2:
+            LOGGER.exception("[UPLOAD][GRAPH][FALLBACK-ERROR] %s", e2)
+            raise

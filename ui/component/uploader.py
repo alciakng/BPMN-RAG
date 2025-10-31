@@ -1,3 +1,5 @@
+# uploader.py (수정된 부분만)
+from __future__ import annotations
 
 import json
 import os
@@ -12,7 +14,7 @@ import streamlit as st
 from agent.graph_query_agent import GraphQueryAgent
 from manager.session_store import SessionStore
 from bpmn2neo.settings import ContainerSettings 
-from ui.app.handler import ingest_and_register_bpmn, handle_image_upload_to_s3
+from ui.app.handler import fetch_graph_for_tabs, ingest_and_register_bpmn, handle_image_upload_to_s3
 from ui.common.log_viewer import LiveLogPanel
 from ui.component.agraph import render_graph_with_selector  # Import new graph module
 
@@ -132,7 +134,7 @@ def render_uploader() -> None:
         </style>
         """, unsafe_allow_html=True)
 
-        st.info("Upload *.bpmn file and (optional) image, then click **Submit**")
+        st.info(".bpmn 파일을 업로드하고 적재를 수행하십시오.(파일명은 특수문자를 제거해주세요.)")
 
         # File upload columns
         col1, col2 = st.columns([3, 2], vertical_alignment="center")

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Optional, Tuple
 
 import streamlit as st
+from ui.app.handler import reset_uploaded_model
 from common.logger import Logger
 
 from streamlit_extras.bottom_container import bottom
@@ -37,11 +38,6 @@ def render_chat_input_box(
 
         # Generate versioned uploader key for reset capability
         session_store = st.session_state.get("session_store")
-        uploader_key = (
-            session_store.get_uploader_key(session_id) 
-            if session_store 
-            else "bpmn_uploader_0"
-        )
 
         # Get models from session store
         uploaded_model = session_store.get_uploaded_model(session_id) if (session_store and session_id) else None
@@ -89,6 +85,8 @@ def render_chat_input_box(
 
                     if prompt and prompt["files"]:
                         uploaded_file = prompt["files"][0]
+                        if uploaded_models :
+                            reset_uploaded_model()
 
                     submitted = True
 

@@ -60,7 +60,6 @@ class GraphQueryAgent:
 
         self.openai_settings = OpenAISettings(api_key=api_key, embedding_model='text-embedding-3-small')
         self.neo4j_settings = Neo4jSettings(uri=uri,username=user,password=pwd,database=db)
-        
 
     # ------------------------------------------------------------------
     # Public APIs
@@ -149,7 +148,7 @@ class GraphQueryAgent:
                 SYS_PROMPT_4O = """
                                 [GOALS]
                                 - If `upload_model_context` exists: primary goal = compare each model in `model_context` vs `upload_model_context` and propose concrete improvements for the uploaded model.
-                                - If `upload_model_context` is absent: primary goal = explain the user query with per-model sections using only `model_context`.
+                                - If `upload_model_context` is absent: primary goal = explain the user query with per-model sections using only `model_context` and propose concrete improvements for the model context.
 
                                 [ROLE]
                                 - Act as a BPMN/Neo4j Graph-RAG expert and senior Process Innovation Consultant.
@@ -162,14 +161,13 @@ class GraphQueryAgent:
                                 Format: | Issue/Risk | Evidence (IDs, node names) | Impact Area (e.g., lead time/quality/compliance) | Severity (H/M/L) | one-line Solution |
 
                                 - Improvements & Effects Table:
-                                Propose only if the query requires or implies recommendations and quantified effects.
                                 For each item include: Action, KPI, baseline → target, expected delta (%), one-line mechanism, risks/assumptions.
                                 Example: “lead time ↓15–25% by removing one handoff; first-time-right ↑10–15% by naming gateways + adding receipt ACK”.
                                 If KPIs or data are insufficient, state it briefly and omit quantification.
                                 
                                 [RULES]
                                 - Use only the payload; if something is missing, say so and propose the minimal patch to collect it.
-                                - `short_history` is reference-only. Do NOT reuse any previous answer verbatim.
+                                - `CHAT_HISTORY` is reference-only. Do NOT reuse any previous answer verbatim.
 
                                 [STYLE]
                                 - Korean only.

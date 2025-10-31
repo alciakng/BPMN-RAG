@@ -8,6 +8,7 @@ from bpmn2neo.settings import ContainerSettings
 
 
 from common.logger import Logger
+from analytics import track
 from ui.app.handler import derive_candidates, answer_with_selected, ingest_and_register_bpmn
 from ui.component.panels import render_candidates_selector
 from ui.component.chat_input_module import render_chat_input_box
