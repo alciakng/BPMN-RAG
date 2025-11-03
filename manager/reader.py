@@ -64,6 +64,8 @@ class Reader:
             n,
             CASE
                 WHEN $qemb IS NOT NULL AND n.context_vector IS NOT NULL
+                     AND size(n.context_vector) > 0 AND size($qemb) > 0
+                     AND size(n.context_vector) = size($qemb)
                 THEN gds.similarity.cosine(n.context_vector, $qemb)
                 ELSE 0.0
             END AS cos_sim
