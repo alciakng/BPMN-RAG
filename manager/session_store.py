@@ -124,6 +124,11 @@ class SessionStore:
     def _k_analysis_index(session_id: str) -> str:
         return f"analysis_index:{session_id}"
 
+    @staticmethod
+    def _k_etl_models(session_id: str) -> str:
+        """Key for ETL (uploaded via BPMN loader) model keys."""
+        return f"etl_models:{session_id}"
+
     # ---------- Uploaded model ----------
     def save_uploaded_model(self, session_id: str, model_key: str) -> None:
         """Store uploaded model key for the session."""
@@ -353,3 +358,97 @@ class SessionStore:
             LOGGER.info("[SESSION] clear_history session=%s analysis=%s", session_id, analysis_id)
         except Exception as e:
             LOGGER.exception("[SESSION][clear_history][ERROR] %s", e)
+
+    # ---------- ETL Models (BPMN Loader) ----------
+    def add_etl_model(self, session_id: str, model_key: str) -> None:
+        """
+        Add a model key to the ETL models list.
+        Used when a BPMN file is uploaded via the loader page.
+
+        Args:
+            session_id: Session identifier
+            model_key: Model key to add (typically filename without extension)
+        """
+        try:
+            key = self._k_etl_models(session_id)
+
+            # Get existing models
+            models = self.get_etl_models(session_id)
+
+            # Add if not already present
+            if model_key not in models:
+                models.append(model_key)
+                self.redis.set(key, json.dumps(models, ensure_ascii=False))
+                LOGGER.info(
+                    "[SESSION] add_etl_model session=%s model=%s",
+                    session_id, model_key
+                )
+            else:
+                LOGGER.debug(
+                    "[SESSION] ETL model already exists session=%s model=%s",
+                    session_id, model_key
+                )
+        except Exception as e:
+            LOGGER.exception("[SESSION][add_etl_model][ERROR] %s", e)
+
+    def get_etl_models(self, session_id: str) -> List[str]:
+        """
+        Get all ETL model keys for the session.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            List of model keys loaded via BPMN loader
+        """
+        try:
+            raw = self.redis.get(self._k_etl_models(session_id))
+            models = json.loads(raw) if raw else []
+            LOGGER.debug(
+                "[SESSION] get_etl_models session=%s count=%d",
+                session_id, len(models)
+            )
+            return models
+        except Exception as e:
+            LOGGER.exception("[SESSION][get_etl_models][ERROR] %s", e)
+            return []
+
+    def remove_etl_model(self, session_id: str, model_key: str) -> None:
+        """
+        Remove a specific model key from ETL models list.
+
+        Args:
+            session_id: Session identifier
+            model_key: Model key to remove
+        """
+        try:
+            models = self.get_etl_models(session_id)
+
+            if model_key in models:
+                models.remove(model_key)
+                key = self._k_etl_models(session_id)
+                self.redis.set(key, json.dumps(models, ensure_ascii=False))
+                LOGGER.info(
+                    "[SESSION] remove_etl_model session=%s model=%s",
+                    session_id, model_key
+                )
+            else:
+                LOGGER.debug(
+                    "[SESSION] ETL model not found for removal session=%s model=%s",
+                    session_id, model_key
+                )
+        except Exception as e:
+            LOGGER.exception("[SESSION][remove_etl_model][ERROR] %s", e)
+
+    def clear_etl_models(self, session_id: str) -> None:
+        """
+        Clear all ETL models for the session.
+
+        Args:
+            session_id: Session identifier
+        """
+        try:
+            self.redis.delete(self._k_etl_models(session_id))
+            LOGGER.info("[SESSION] clear_etl_models session=%s", session_id)
+        except Exception as e:
+            LOGGER.exception("[SESSION][clear_etl_models][ERROR] %s", e)

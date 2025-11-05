@@ -74,23 +74,32 @@ def render_graph() -> None:
     """
     Render graph visualization for loaded models.
     Supports single or multiple model selection via slider.
+    Uses session_store to retrieve ETL models.
     """
     try:
-        # Get loaded model keys from session
-        loaded_models = st.session_state.get("loaded_model_keys", [])
-        
+        # Get session components
+        session_store = _get_session_store()
+        session_id = _get_session_id()
+
+        if not session_store or not session_id:
+            LOGGER.warning("[UPLOAD][GRAPH] Session store or ID not available")
+            return
+
+        # Get loaded model keys from session_store
+        loaded_models = session_store.get_etl_models(session_id)
+
         if not loaded_models:
             LOGGER.info("[UPLOAD][GRAPH] No models loaded yet")
             return
-        
+
         LOGGER.info(
             "[UPLOAD][GRAPH] Rendering graphs for models: %s",
             loaded_models
         )
-        
+
         # Render with model selector (handles single/multiple models)
         render_graph_with_selector(loaded_models)
-        
+
     except Exception as e:
         LOGGER.exception("[UPLOAD][GRAPH][ERROR] Graph rendering failed: %s", e)
         st.error("Failed to render graphs. Please check logs.")
@@ -252,24 +261,25 @@ def _process_bpmn_upload(bpmn_file) -> None:
                 st.error("BPMN ingestion failed. Please check logs below.")
                 return
             
-            # Success - update session state
+            # Success - update session store with ETL model
             info = res.get("result") or {}
             model_name = info.get('model_name') or model_key
-            
+
             st.success(f"Model ingestion complete: {model_name} (key={model_key})")
-            
+
             LOGGER.info(
                 "[UPLOAD][BPMN][SUCCESS] session=%s model_key=%s",
                 session_id, model_key
             )
-            
-            # Add to loaded models list
-            if "loaded_model_keys" not in st.session_state:
-                st.session_state["loaded_model_keys"] = []
-            
-            if model_key not in st.session_state["loaded_model_keys"]:
-                st.session_state["loaded_model_keys"].append(model_key)
-            
+
+            # Add to session_store ETL models
+            if session_store and session_id:
+                session_store.add_etl_model(session_id, model_key)
+                LOGGER.info(
+                    "[UPLOAD][BPMN] Added to session_store ETL models: %s",
+                    model_key
+                )
+
             # Rerun to show graph
             st.rerun()
             
