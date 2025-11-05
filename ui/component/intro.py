@@ -1,5 +1,6 @@
 import streamlit as st
 import logging
+from typing import Optional
 
 # Global logger
 LOGGER = logging.getLogger(__name__)
@@ -20,24 +21,24 @@ def intro():
             """,
             unsafe_allow_html=True
         )
-        
+
         # Add spacing
         st.markdown("<br>", unsafe_allow_html=True)
-        
+
         # Welcome message
         st.markdown(
             """
             <div style='text-align: center; font-size: 1.2rem; color: #A0A0A0; margin-bottom: 3rem;'>
                 BPMN AI-Agent에 오신 것을 환영합니다!<br>
-                비즈니스 프로세스 모델을 적재하고 분석하세요.
+                비즈니스 프로세스 모델을 적재하고 분석하세요.<br>
             </div>
             """,
             unsafe_allow_html=True
         )
-        
+
         # Feature sections as clickable cards with buttons
         col1, col2 = st.columns(2, gap="large")
-        
+
         # BPMN Upload Section Button
         with col1:
             st.markdown(
@@ -78,7 +79,7 @@ def intro():
         st.markdown(
             """
             <div style='text-align: center; color: #606060; font-size: 1.1rem; margin-top: 3rem;'>
-                Created by JongHwan Kim · 
+                Created by JongHwan Kim ·
                 <a href='https://github.com/alciakng' target='_blank' style='color: #00D26A; text-decoration: none;'>
                     GitHub
                 </a>
@@ -86,9 +87,17 @@ def intro():
             """,
             unsafe_allow_html=True
         )
-        
+
+        popup(
+            title="사용기한 안내",
+            body="~11.14일 까지 무료로 이용 가능합니다.\n이후에는 Neo4j 과금이슈로 서비스가 중단될 수 있습니다.",
+            contact="추가 사용을 원하실 경우 연락바랍니다.",
+            email="kjhweb@outlook.kr",
+            message_type="info"
+        )
+
         LOGGER.info("Intro page rendered successfully")
-        
+
     except Exception as e:
         # Error handling with logging
         LOGGER.error(f"Error rendering intro page: {str(e)}", exc_info=True)
@@ -107,14 +116,14 @@ def main_board():
         # Initialize session state for menu selection if not exists
         if 'selected_menu' not in st.session_state:
             st.session_state.selected_menu = "Main"
-        
+
         # Get selected menu from sidebar
         selected = sidebar_menu()
-        
+
         # Update session state if sidebar selection changes
         if selected != st.session_state.selected_menu:
             st.session_state.selected_menu = selected
-        
+
         # Route to appropriate page based on session state
         if st.session_state.selected_menu.startswith("Main"):
             intro()
@@ -122,9 +131,9 @@ def main_board():
             render_loader()
         elif st.session_state.selected_menu.startswith("프로세스 분석"):
             handle_agent_response()
-            
+
         LOGGER.info(f"Navigated to: {st.session_state.selected_menu}")
-        
+
     except Exception as e:
         LOGGER.error(f"Error in main_board navigation: {str(e)}", exc_info=True)
         st.error("네비게이션 오류가 발생했습니다. 다시 시도해주세요.")
@@ -138,16 +147,16 @@ def sidebar_menu():
     try:
         with st.sidebar:
             st.title("BPMN AI-Agent")
-            
+
             selected = st.radio(
                 "메뉴 선택",
                 ["Main", "BPMN 적재", "프로세스 분석"],
                 index=["Main", "BPMN 적재", "프로세스 분석"].index(st.session_state.get('selected_menu', 'Main')) if st.session_state.get('selected_menu', 'Main') in ["Main", "BPMN 적재", "프로세스 분석"] else 0,
                 label_visibility="collapsed"
             )
-            
+
         return selected
-        
+
     except Exception as e:
         LOGGER.error(f"Error rendering sidebar: {str(e)}", exc_info=True)
         return "Main"  # Default fallback
@@ -166,13 +175,156 @@ def handle_agent_response():
     st.info("프로세스 분석 페이지 - 여기에 에이전트 채팅 로직을 구현하세요")
 
 
+@st.dialog("알림", width="medium")
+def popup(
+    title: str = "알림",
+    body: str = "",
+    contact: Optional[str] = None,
+    email: Optional[str] = None,
+    message_type: str = "info"
+) -> None:
+    """
+    Display a styled popup notification with title, body, and contact sections.
+
+    Args:
+        title: Popup title (header section)
+        body: Main message body
+        contact: Contact message (optional)
+        email: Email address to display (optional)
+        message_type: Type of notification ('info', 'success', 'warning', 'error')
+
+    Example:
+        >>> popup(
+        >>>     title="사용기한 안내",
+        >>>     body="서비스 이용 기간에 대한 안내입니다.",
+        >>>     contact="문의사항이 있으시면 연락주세요.",
+        >>>     email="contact@example.com",
+        >>>     message_type="warning"
+        >>> )
+    """
+    try:
+        # Color mapping based on message type
+        color_map = {
+            "info": "#1f6feb",
+            "success": "#00D26A",
+            "warning": "#f4a261",
+            "error": "#e63946"
+        }
+
+        border_color = color_map.get(message_type, "#1f6feb")
+
+        # Title section
+        st.markdown(
+            f"""
+            <div style='
+                text-align: center;
+                margin-bottom: 1.5rem;
+                padding-bottom: 0.5rem;
+                border-bottom: 2px solid {border_color};
+            '>
+                <h2 style='
+                    color: {border_color};
+                    margin: 0;
+                    font-size: 1.5rem;
+                    font-weight: bold;
+                '>
+                    {title}
+                </h2>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        # Body section
+        if body:
+            # Convert newlines to <br> for HTML rendering
+            body_html = body.replace('\n', '<br>')
+            st.markdown(
+                f"""
+                <div style='
+                    background-color: #1E3A5F;
+                    padding: 1.5rem;
+                    border-radius: 10px;
+                    border-left: 5px solid {border_color};
+                    margin-bottom: 1.5rem;
+                '>
+                    <p style='
+                        font-size: 1.1rem;
+                        line-height: 1.8;
+                        color: #ffffff;
+                        margin: 0;
+                        text-align: center;
+                    '>
+                        {body_html}
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        # Contact section
+        if contact or email:
+            if contact:
+                st.markdown(
+                    f"""
+                    <p style='
+                        font-size: 0.95rem;
+                        color: #A0A0A0;
+                        margin: 0 0 0.5rem 0;
+                        text-align: center;
+                    '>
+                        {contact}
+                    </p>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            if email:
+                st.markdown(
+                    f"""
+                    <p style='
+                        font-size: 1rem;
+                        color: {border_color};
+                        margin: 0;
+                        text-align: center;
+                        font-weight: bold;
+                    '>
+                        📧 {email}
+                    </p>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        LOGGER.info(f"Popup displayed: title={title}, type={message_type}")
+
+    except Exception as e:
+        LOGGER.error(f"Error displaying popup: {str(e)}", exc_info=True)
+        # Fallback to standard Streamlit notification
+        fallback_msg = f"{title}\n\n{body}"
+        if contact:
+            fallback_msg += f"\n\n{contact}"
+        if email:
+            fallback_msg += f"\n{email}"
+
+        if message_type == "success":
+            st.success(fallback_msg)
+        elif message_type == "warning":
+            st.warning(fallback_msg)
+        elif message_type == "error":
+            st.error(fallback_msg)
+        else:
+            st.info(fallback_msg)
+
+
 if __name__ == "__main__":
     # Configure logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     # Set page config
     st.set_page_config(
         page_title="BPMN AI-Agent",
@@ -180,6 +332,6 @@ if __name__ == "__main__":
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
+
     # Run main board
     main_board()
