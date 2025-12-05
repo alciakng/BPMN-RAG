@@ -347,12 +347,12 @@ def _process_uploaded_file(uploaded_file, session_id: str) -> Optional[Dict]:
             }
         )
 
-        # set Container
+        # set Container from secrets (upload container)
         container_settings = ContainerSettings(
             create_container=True,
-            container_type='upd',
-            container_id='updCntr',
-            container_name='updBpmn'
+            container_type=st.secrets.get("UPD_CONTAINER_TYPE", "upd"),
+            container_id=st.secrets.get("UPD_CONTAINER_ID", "updCntr"),
+            container_name=st.secrets.get("UPD_CONTAINER_NAME", "updBpmn")
         )
         
         upload_info = ingest_and_register_bpmn(

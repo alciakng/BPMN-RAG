@@ -16,7 +16,6 @@ from bpmn2neo.settings import ContainerSettings, OpenAISettings, Neo4jSettings
 
 from typing import Any, Dict, List, Optional
 
-
 from bpmn2neo import load_and_embed, load_bpmn_to_neo4j # your library
 from bpmn2neo.settings import Settings
 
@@ -64,15 +63,43 @@ class GraphQueryAgent:
     # ------------------------------------------------------------------
     # Public APIs
     # ------------------------------------------------------------------
-    def ingest_and_index_bpmn(self, file_path: str, filename: str, container_settings: ContainerSettings) -> Dict[str, str]:
+    def ingest_and_index_bpmn(
+        self,
+        file_path: str,
+        filename: str,
+        container_settings: ContainerSettings,
+        parent_category_key: Optional[str] = None,
+        predecessor_model_key: Optional[str] = None
+    ) -> Dict[str, str]:
         """
         Ingest the BPMN file into Neo4j using bpmn2neo and return {"model_key", "model_name"}.
+
+        Args:
+            file_path: Path to BPMN file
+            filename: Filename to use as model key
+            container_settings: Container settings
+            parent_category_key: Parent category key (for CONTAINS_MODEL relationship)
+            predecessor_model_key: Predecessor model key (for NEXT_PROCESS relationship)
+
+        Returns:
+            Dictionary with model_key and model_name
         """
         try:
-            
-            s = Settings(container=container_settings, neo4j= self.neo4j_settings,openai=self.openai_settings)
-            modelkey = load_and_embed(bpmn_path=file_path, model_key=filename, settings=s, mode='light')
-            LOGGER.info("[AGENT] bpmn load_and_embed filename= %s, modelKey=%s", filename, modelkey['model_key'])
+            s = Settings(container=container_settings, neo4j=self.neo4j_settings, openai=self.openai_settings)
+
+            modelkey = load_and_embed(
+                bpmn_path=file_path,
+                model_key=filename,
+                settings=s,
+                mode='light',
+                parent_category_key=parent_category_key,
+                predecessor_model_key=predecessor_model_key
+            )
+
+            LOGGER.info(
+                "[AGENT] bpmn load_and_embed filename=%s, modelKey=%s, parent=%s, predecessor=%s",
+                filename, modelkey['model_key'], parent_category_key, predecessor_model_key
+            )
 
             return {"model_key": modelkey['model_key'], "model_name": filename}
         except Exception as e:

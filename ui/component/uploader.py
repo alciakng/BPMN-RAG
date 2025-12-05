@@ -17,6 +17,7 @@ from bpmn2neo.settings import ContainerSettings
 from ui.app.handler import fetch_graph_for_tabs, ingest_and_register_bpmn, handle_image_upload_to_s3
 from ui.common.log_viewer import LiveLogPanel
 from ui.component.agraph import render_graph_with_selector  # Import new graph module
+from ui.component.common.tree_viewer import render_tree_viewer  # Import tree viewer
 
 
 LOGGER = logging.getLogger(__name__)
@@ -59,10 +60,17 @@ def _filename_key(name: str) -> str:
 def render_loader() -> None:
     """
     Main entry point for BPMN uploader page.
-    Renders both uploader and graph visualization.
+    Renders category tree viewer, uploader, and graph visualization.
     """
     try:
         LOGGER.info("[UPLOAD][LOADER] Rendering uploader page")
+
+        # Render category tree viewer at the top
+        render_category_tree_viewer()
+
+        st.markdown("---")
+
+        # Render uploader and graph
         render_uploader()
         render_graph()
     except Exception as e:
@@ -70,36 +78,281 @@ def render_loader() -> None:
         st.error("Failed to render page. Please check logs.")
 
 
+def render_category_tree_viewer() -> None:
+    """
+    Render category tree viewer at the top of uploader page.
+    Allows user to select category and predecessor model for upload.
+    """
+    try:
+        st.header("카테고리 선택")
+
+        # Get reader from session
+        reader = st.session_state.get("reader")
+        if not reader:
+            st.warning("Reader가 초기화되지 않았습니다.")
+            return
+
+        # Get container ID
+        container_id = st.secrets.get("CONTAINER_ID", "default_container")
+
+        # Fetch category tree (categories only)
+        try:
+            category_tree = reader.fetch_category_tree_only(container_id)
+        except Exception as e:
+            st.error(f"카테고리 트리 조회 실패: {e}")
+            LOGGER.exception("[UPLOADER][TREE] Category tree fetch failed: %s", e)
+            return
+
+        if not category_tree:
+            st.info("카테고리가 없습니다. 먼저 카테고리를 생성하세요.")
+            return
+
+        # 2-column layout: Category selector | Predecessor selector
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("#### 1. 업로드 대상 카테고리")
+
+            # Render tree viewer
+            selected_category = render_tree_viewer(
+                tree_data=category_tree,
+                key="uploader_category_tree",
+                allow_clear=True,
+                tree_checkable=False,
+                show_search=True,
+                max_height=250,
+                width_dropdown="100%",
+                placeholder="카테고리 선택",
+                tree_line=True
+            )
+
+            # Log selected_category return value
+            LOGGER.info(f"[UPLOADER][TREE] selected_category returned: {selected_category}, type: {type(selected_category)}")
+
+            # Log category_tree structure for debugging
+            LOGGER.info(f"[UPLOADER][TREE] category_tree structure: {category_tree}")
+
+            # Store selected category in session state
+            if selected_category and len(selected_category) > 0:
+                selected_key = selected_category
+                LOGGER.info(f"[UPLOADER][TREE] selected_key extracted: {selected_key}")
+
+                category_node = _find_node_in_tree(category_tree, selected_key)
+                LOGGER.info(f"[UPLOADER][TREE] category_node found: {category_node}")
+
+                if category_node:
+                    st.session_state["upload_category_key"] = selected_key
+                    st.session_state["upload_category_name"] = category_node.get("title", selected_key)
+                    LOGGER.info(f"[UPLOADER][TREE] Session state updated: key={selected_key}, name={category_node.get('title')}")
+                    st.success(f"선택: `{category_node.get('title')}`")
+                else:
+                    LOGGER.warning(f"[UPLOADER][TREE] category_node is None for selected_key: {selected_key}")
+            else:
+                st.session_state["upload_category_key"] = None
+                st.session_state["upload_category_name"] = None
+                LOGGER.info("[UPLOADER][TREE] No category selected")
+                st.info("카테고리를 선택하세요.")
+
+        with col2:
+            st.markdown("#### 2. 기존 프로세스")
+
+            category_key = st.session_state.get("upload_category_key")
+
+            if category_key:
+                # Fetch models under selected category
+                try:
+                    sibling_models = reader.fetch_models_under_category(category_key)
+                    LOGGER.info(f"[UPLOADER][MODELS] Found {len(sibling_models)} models under category {category_key}")
+                except Exception as e:
+                    st.error(f"모델 조회 실패: {e}")
+                    LOGGER.exception("[UPLOADER][MODELS] Sibling models fetch failed: %s", e)
+                    sibling_models = []
+
+                if sibling_models:
+                    # Build graph data for visualization
+                    model_keys = [m.get("model_key") for m in sibling_models]
+
+                    # Create nodes and edges for agraph
+                    nodes = []
+                    edges = []
+
+                    for model in sibling_models:
+                        model_key = model.get("model_key")
+                        model_name = model.get("name") or model_key
+
+                        # Add node
+                        nodes.append({
+                            "id": model_key,
+                            "label": model_name,
+                            "title": model_name,
+                            "group": "Model"
+                        })
+
+                        # Add edge if NEXT_PROCESS relationship exists
+                        next_key = model.get("next_model_key")
+                        if next_key:
+                            edges.append({
+                                "source": model_key,
+                                "target": next_key,
+                                "label": "NEXT"
+                            })
+
+                    LOGGER.info(f"[UPLOADER][GRAPH] Built graph with {len(nodes)} nodes, {len(edges)} edges")
+
+                    # Render graph with agraph
+                    from streamlit_agraph import agraph, Node, Edge, Config
+
+                    # Transform to agraph objects
+                    from ui.component.agraph import _make_nodes_edges, _agraph_config
+
+                    n_objs, e_objs = _make_nodes_edges(nodes, edges)
+                    cfg = _agraph_config(
+                        title="Process Graph",
+                        height=300,
+                        width=600
+                    )
+
+                    # Render graph and get selected node
+                    selected_node = agraph(nodes=n_objs, edges=e_objs, config=cfg)
+
+                    LOGGER.info(f"[UPLOADER][GRAPH] Selected node: {selected_node}")
+
+                    # Handle node selection
+                    if selected_node:
+                        # Extract model_key from selected node
+                        selected_model_key = selected_node
+
+                        # Find model info
+                        selected_model = next(
+                            (m for m in sibling_models if m.get("model_key") == selected_model_key),
+                            None
+                        )
+
+                        if selected_model:
+                            predecessor_id = selected_model.get("id")
+                            predecessor_name = selected_model.get("name")
+
+                            LOGGER.info(
+                                f"[UPLOADER][GRAPH] Setting predecessor: id={predecessor_id}, "
+                                f"name={predecessor_name}, model_key={selected_model_key}"
+                            )
+
+                            st.session_state["upload_predecessor_key"] = predecessor_id
+                            st.session_state["upload_predecessor_name"] = predecessor_name
+                            st.success(f"선택된 노드: `{predecessor_name}`")
+                        else:
+                            LOGGER.warning(f"[UPLOADER][GRAPH] Selected model not found: {selected_model_key}")
+                    else:
+                        st.session_state["upload_predecessor_key"] = None
+                        st.session_state["upload_predecessor_name"] = None
+                        st.info("그래프에서 선행 프로세스를 선택하세요")
+                else:
+                    st.session_state["upload_predecessor_key"] = None
+                    st.session_state["upload_predecessor_name"] = None
+                    st.info("기존 모델 없음")
+            else:
+                st.session_state["upload_predecessor_key"] = None
+                st.session_state["upload_predecessor_name"] = None
+                st.warning("먼저 카테고리를 선택하세요.")
+
+        # Display selected information
+        _display_upload_target_info()
+
+    except Exception as e:
+        LOGGER.exception("[UPLOADER][TREE][ERROR] Tree viewer rendering failed: %s", e)
+        st.error(f"트리 뷰어 렌더링 실패: {e}")
+
+
+def _find_node_in_tree(tree_data: List[Dict], target_value: str) -> Optional[Dict]:
+    """
+    Find node in tree data by value (recursive).
+    """
+    LOGGER.info(f"[UPLOADER][TREE][SEARCH] Searching for target_value: {target_value}")
+    LOGGER.info(f"[UPLOADER][TREE][SEARCH] tree_data length: {len(tree_data)}")
+
+    for idx, node in enumerate(tree_data):
+        node_value = node.get("value")
+        node_title = node.get("title")
+        LOGGER.info(f"[UPLOADER][TREE][SEARCH] Checking node[{idx}]: value={node_value}, title={node_title}")
+
+        if node_value == target_value:
+            LOGGER.info(f"[UPLOADER][TREE][SEARCH] Match found! Returning node: {node}")
+            return node
+
+        children = node.get("children", [])
+        if children:
+            LOGGER.info(f"[UPLOADER][TREE][SEARCH] Node has {len(children)} children, searching recursively")
+            result = _find_node_in_tree(children, target_value)
+            if result:
+                LOGGER.info(f"[UPLOADER][TREE][SEARCH] Match found in children! Returning: {result}")
+                return result
+
+    LOGGER.warning(f"[UPLOADER][TREE][SEARCH] No match found for target_value: {target_value}")
+    return None
+
+
+def _display_upload_target_info() -> None:
+    """
+    Display upload target information (category and predecessor) in a bordered box.
+    """
+    try:
+        category_key = st.session_state.get("upload_category_key")
+        category_name = st.session_state.get("upload_category_name")
+        predecessor_key = st.session_state.get("upload_predecessor_key")
+        predecessor_name = st.session_state.get("upload_predecessor_name")
+
+        if category_key:
+            # Build content
+            if predecessor_key:
+                content = f"""
+                <div style="border: 2px solid #0e76a8; border-radius: 8px; padding: 16px; background-color: #f0f8ff; margin-top: 16px;">
+                    <p style="margin: 0; font-size: 15px; color: #333;">
+                        <strong>카테고리:</strong> <code>{category_name}</code> 하위 모델로 적재
+                    </p>
+                    <p style="margin: 8px 0 0 0; font-size: 15px; color: #333;">
+                        <strong>선행 프로세스:</strong> <code>{predecessor_name}</code> 의 후행 프로세스로 연결 (NEXT_PROCESS)
+                    </p>
+                </div>
+                """
+            else:
+                content = f"""
+                <div style="border: 2px solid #0e76a8; border-radius: 8px; padding: 16px; background-color: #f0f8ff; margin-top: 16px;">
+                    <p style="margin: 0; font-size: 15px; color: #333;">
+                        <strong>카테고리:</strong> <code>{category_name}</code> 하위 모델로 적재
+                    </p>
+                    <p style="margin: 8px 0 0 0; font-size: 15px; color: #666;">
+                        선행 프로세스 없음
+                    </p>
+                </div>
+                """
+
+            st.markdown(content, unsafe_allow_html=True)
+
+    except Exception as e:
+        LOGGER.exception("[UPLOADER][INFO][ERROR] Display info failed: %s", e)
+
+
 def render_graph() -> None:
     """
     Render graph visualization for loaded models.
     Supports single or multiple model selection via slider.
-    Uses session_store to retrieve ETL models.
     """
     try:
-        # Get session components
-        session_store = _get_session_store()
-        session_id = _get_session_id()
-
-        if not session_store or not session_id:
-            LOGGER.warning("[UPLOAD][GRAPH] Session store or ID not available")
-            return
-
-        # Get loaded model keys from session_store
-        loaded_models = session_store.get_etl_models(session_id)
-
+        # Get loaded model keys from session
+        loaded_models = st.session_state.get("loaded_model_keys", [])
+        
         if not loaded_models:
             LOGGER.info("[UPLOAD][GRAPH] No models loaded yet")
             return
-
+        
         LOGGER.info(
             "[UPLOAD][GRAPH] Rendering graphs for models: %s",
             loaded_models
         )
-
+        
         # Render with model selector (handles single/multiple models)
         render_graph_with_selector(loaded_models)
-
+        
     except Exception as e:
         LOGGER.exception("[UPLOAD][GRAPH][ERROR] Graph rendering failed: %s", e)
         st.error("Failed to render graphs. Please check logs.")
@@ -177,11 +430,27 @@ def render_uploader() -> None:
         if bpmn_file is None:
             st.error("Please upload a BPMN file first.")
             return
-        
-        LOGGER.info("[UPLOAD][SUBMIT] Starting ingestion process")
-        
-        # Ingest BPMN
-        _process_bpmn_upload(bpmn_file)
+
+        # Validate category selection
+        category_key = st.session_state.get("upload_category_key")
+        if not category_key:
+            st.error(" 도메인을 선택 후 적재를 진행하세요.")
+            return
+
+        # Get predecessor key (optional)
+        predecessor_key = st.session_state.get("upload_predecessor_key")
+
+        LOGGER.info(
+            "[UPLOAD][SUBMIT] Starting ingestion category=%s predecessor=%s (type=%s)",
+            category_key, predecessor_key, type(predecessor_key)
+        )
+
+        # Ingest BPMN with category and predecessor
+        _process_bpmn_upload(
+            bpmn_file=bpmn_file,
+            parent_category_key=category_key,
+            predecessor_model_key=predecessor_key
+        )
         
         # Optional image upload
         if image_file is not None:
@@ -192,12 +461,18 @@ def render_uploader() -> None:
         st.error("Uploader encountered an error. Please check logs.")
 
 
-def _process_bpmn_upload(bpmn_file) -> None:
+def _process_bpmn_upload(
+    bpmn_file,
+    parent_category_key: Optional[str] = None,
+    predecessor_model_key: Optional[str] = None
+) -> None:
     """
     Process and ingest BPMN file into Neo4j.
-    
+
     Args:
         bpmn_file: Streamlit UploadedFile object
+        parent_category_key: Parent category key (for CONTAINS_MODEL relationship)
+        predecessor_model_key: Predecessor model key (for NEXT_PROCESS relationship)
     """
     tmp_path = None
     
@@ -227,12 +502,12 @@ def _process_bpmn_upload(bpmn_file) -> None:
             session_store = _get_session_store()
             session_id = _get_session_id()
 
-            # Configure container settings
+            # Configure container settings from secrets
             container_settings = ContainerSettings(
                 create_container=True,
-                container_type='bp',
-                container_id='bpCntr',
-                container_name='BpBpmn'
+                container_type=st.secrets.get("CONTAINER_TYPE", "bp"),
+                container_id=st.secrets.get("CONTAINER_ID", "bpCntr"),
+                container_name=st.secrets.get("CONTAINER_NAME", "BpBpmn")
             )
 
             # Create live log panel
@@ -246,7 +521,9 @@ def _process_bpmn_upload(bpmn_file) -> None:
                     session_id=session_id,
                     file_path=tmp_path,
                     filename=model_key,
-                    container_settings=container_settings
+                    container_settings=container_settings,
+                    parent_category_key=parent_category_key,
+                    predecessor_model_key=predecessor_model_key
                 )
 
             # Run ingestion with live log streaming
@@ -261,25 +538,24 @@ def _process_bpmn_upload(bpmn_file) -> None:
                 st.error("BPMN ingestion failed. Please check logs below.")
                 return
             
-            # Success - update session store with ETL model
+            # Success - update session state
             info = res.get("result") or {}
             model_name = info.get('model_name') or model_key
-
+            
             st.success(f"Model ingestion complete: {model_name} (key={model_key})")
-
+            
             LOGGER.info(
                 "[UPLOAD][BPMN][SUCCESS] session=%s model_key=%s",
                 session_id, model_key
             )
-
-            # Add to session_store ETL models
-            if session_store and session_id:
-                session_store.add_etl_model(session_id, model_key)
-                LOGGER.info(
-                    "[UPLOAD][BPMN] Added to session_store ETL models: %s",
-                    model_key
-                )
-
+            
+            # Add to loaded models list
+            if "loaded_model_keys" not in st.session_state:
+                st.session_state["loaded_model_keys"] = []
+            
+            if model_key not in st.session_state["loaded_model_keys"]:
+                st.session_state["loaded_model_keys"].append(model_key)
+            
             # Rerun to show graph
             st.rerun()
             
@@ -305,7 +581,7 @@ def _process_image_upload(image_file) -> None:
         image_file: Streamlit UploadedFile object
     """
     try:
-        LOGGER.info("[UPLOAD][IMAGE] Processing image: %s", image_file.name)
+        LOGGER.info("[UPLOAD][IMAGE] Processing image : %s", image_file.name)
         
         obj_key, s3_url = handle_image_upload_to_s3(
             image_bytes=image_file.read(),

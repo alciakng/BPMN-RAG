@@ -52,7 +52,7 @@ class Reader:
 
             cypher = """
             // 1) Gather model keys under the bp node (optionally narrowed by $bp_id).
-            MATCH (bp)-[:HAS_MODEL]->(m:BPMNModel)
+            MATCH (category)-[:CONTAINS_MODEL]->(m:BPMNModel)
             WITH collect(DISTINCT m.modelKey) AS model_keys
 
             // 2) Filter candidate nodes at MATCH-time using collected model_keys.
@@ -870,3 +870,284 @@ class Reader:
         except Exception as e:
             LOGGER.exception("[READER][DATAIO][ERROR] %s", e)
             return {"nodes": [], "edges": []}
+
+    # ------------------------------------------------------------------
+    # 5) Category & Model Tree & Hierarchy
+    # ------------------------------------------------------------------
+    def fetch_category_tree_only(self, container_id: str) -> List[Dict[str, Any]]:
+        """
+        카테고리 노드만 계층 구조로 조회 (업로더에서 사용)
+
+        구조:
+        Container → HAS_CATEGORY → Category (최상위)
+                                   └→ HAS_SUBCATEGORY → Category (하위) → ...
+
+        Returns:
+            st_ant_tree 형식의 트리 데이터 (카테고리만)
+        """
+        try:
+            LOGGER.info("[CATEGORY_TREE] Fetching category-only tree container_id=%s", container_id)
+
+            cypher = """
+            // 1) 루트 컨테이너 조회
+            MATCH (c {id: $container_id})
+
+            // 2) 컨테이너가 직접 가지고 있는 최상위 카테고리 노드
+            WITH c
+            MATCH (c)-[:HAS_CATEGORY]->(root_cat:Category)
+
+            // 3) 재귀적으로 HAS_SUBCATEGORY 관계의 하위 카테고리 조회
+            OPTIONAL MATCH path = (root_cat)-[:HAS_SUBCATEGORY*0..]->(child_cat:Category)
+
+            WITH root_cat, child_cat, path
+            WHERE child_cat IS NOT NULL
+
+            RETURN DISTINCT
+                child_cat.id AS id,
+                child_cat.modelKey AS model_key,
+                child_cat.name AS name,
+                CASE
+                    WHEN path IS NULL THEN [root_cat.modelKey]
+                    ELSE [root_cat.modelKey] + [node IN nodes(path)[1..] | node.modelKey]
+                END AS path_keys
+            ORDER BY path_keys, child_cat.name
+            """
+
+            rows = self.repository.execute_single_query(cypher, {"container_id": container_id})
+
+            LOGGER.info("[CATEGORY_TREE] Query returned %d category nodes", len(rows))
+
+            # 트리 구조로 변환
+            tree_data = self._build_category_tree_structure(rows)
+
+            LOGGER.info("[CATEGORY_TREE] Built tree with %d root nodes", len(tree_data))
+            return tree_data
+
+        except Exception as e:
+            LOGGER.exception("[CATEGORY_TREE][ERROR] %s", e)
+            return []
+
+    def fetch_category_tree_with_models(self, container_id: str) -> List[Dict[str, Any]]:
+        """
+        카테고리 + 하위 모델까지 포함한 계층 구조 조회 (패널에서 사용)
+
+        구조:
+        Container → Category → CONTAINS_MODEL → Model
+                           └→ HAS_SUBCATEGORY → Category → CONTAINS_MODEL → Model
+
+        Returns:
+            st_ant_tree 형식의 트리 데이터 (카테고리 + 모델)
+        """
+        try:
+            LOGGER.info("[CATEGORY_TREE_FULL] Fetching category + models tree container_id=%s", container_id)
+
+            # 1) 카테고리 트리 먼저 가져오기
+            category_tree = self.fetch_category_tree_only(container_id)
+
+            # 2) 각 카테고리에 CONTAINS_MODEL 관계로 연결된 Model 추가
+            self._attach_models_to_categories(category_tree)
+
+            LOGGER.info("[CATEGORY_TREE_FULL] Complete tree built")
+            return category_tree
+
+        except Exception as e:
+            LOGGER.exception("[CATEGORY_TREE_FULL][ERROR] %s", e)
+            return []
+
+    def fetch_models_under_category(self, category_key: str) -> List[Dict[str, Any]]:
+        """
+        특정 카테고리 하위의 모델 목록 조회 (NEXT_PROCESS 관계 포함)
+
+        Args:
+            category_key: 카테고리 modelKey
+
+        Returns:
+            모델 리스트 (NEXT_PROCESS 관계 정보 포함)
+        """
+        try:
+            LOGGER.info("[CATEGORY_MODELS] Fetching models under category=%s", category_key)
+
+            cypher = """
+            MATCH (cat:Category {modelKey: $category_key})-[:CONTAINS_MODEL]->(m:BPMNModel)
+
+            // NEXT_PROCESS 관계 조회
+            OPTIONAL MATCH (m)-[:NEXT_PROCESS]->(next:BPMNModel)
+            OPTIONAL MATCH (prev:BPMNModel)-[:NEXT_PROCESS]->(m)
+
+            RETURN
+                m.id AS id,
+                m.modelKey AS model_key,
+                m.name AS name,
+                next.modelKey AS next_model_key,
+                prev.modelKey AS prev_model_key
+            ORDER BY m.name
+            """
+
+            rows = self.repository.execute_single_query(cypher, {"category_key": category_key})
+
+            LOGGER.info("[CATEGORY_MODELS] Found %d models", len(rows))
+            return rows
+
+        except Exception as e:
+            LOGGER.exception("[CATEGORY_MODELS][ERROR] %s", e)
+            return []
+
+    def get_models_with_next_process(self, model_keys: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        모델 리스트에 대한 NEXT_PROCESS 관계 그래프 조회
+
+        Args:
+            model_keys: 조회할 모델 키 리스트
+
+        Returns:
+            agraph 형식 {"nodes": [...], "edges": [...]}
+        """
+        try:
+            LOGGER.info("[NEXT_PROCESS_GRAPH] Fetching graph for %d models", len(model_keys))
+
+            cypher = """
+            // 요청된 모델들과 그들의 NEXT_PROCESS 관계
+            MATCH (m1:BPMNModel)-[:NEXT_PROCESS]->(m2:BPMNModel)
+            WHERE m1.modelKey IN $keys OR m2.modelKey IN $keys
+
+            RETURN
+                m1.modelKey AS src_key,
+                m1.name AS src_name,
+                m2.modelKey AS tgt_key,
+                m2.name AS tgt_name
+            """
+
+            rows = self.repository.execute_single_query(cypher, {"keys": model_keys})
+
+            node_map: Dict[str, Dict[str, Any]] = {}
+            edges: List[Dict[str, Any]] = []
+
+            for r in rows:
+                src_key = r.get("src_key")
+                tgt_key = r.get("tgt_key")
+
+                # 노드 추가
+                if src_key and src_key not in node_map:
+                    node_map[src_key] = {
+                        "id": src_key,
+                        "label": r.get("src_name") or src_key,
+                        "title": r.get("src_name") or src_key,
+                        "group": "Model"
+                    }
+
+                if tgt_key and tgt_key not in node_map:
+                    node_map[tgt_key] = {
+                        "id": tgt_key,
+                        "label": r.get("tgt_name") or tgt_key,
+                        "title": r.get("tgt_name") or tgt_key,
+                        "group": "Model"
+                    }
+
+                # 엣지 추가
+                if src_key and tgt_key:
+                    edges.append({
+                        "source": src_key,
+                        "target": tgt_key,
+                        "label": "NEXT"
+                    })
+
+            LOGGER.info("[NEXT_PROCESS_GRAPH] Built graph with %d nodes, %d edges",
+                       len(node_map), len(edges))
+
+            return {"nodes": list(node_map.values()), "edges": edges}
+
+        except Exception as e:
+            LOGGER.exception("[NEXT_PROCESS_GRAPH][ERROR] %s", e)
+            return {"nodes": [], "edges": []}
+
+    # ------------------------------------------------------------------
+    # Helper methods for category tree building
+    # ------------------------------------------------------------------
+    def _build_category_tree_structure(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        쿼리 결과를 st_ant_tree 형식으로 변환 (카테고리만)
+
+        Args:
+            rows: Neo4j 쿼리 결과
+
+        Returns:
+            st_ant_tree 형식 트리 데이터
+        """
+        try:
+            node_map = {}
+            root_nodes = []
+
+            for row in rows:
+                model_key = row.get("model_key")
+                if not model_key:
+                    continue
+
+                path_keys = row.get("path_keys", [])
+
+                node = {
+                    "value": model_key,
+                    "title": row.get("name") or model_key,
+                    "children": [],
+                    "is_category": True,
+                    "_raw": row  # 원본 데이터 보관 (디버깅용)
+                }
+
+                node_map[model_key] = node
+
+                # 루트 노드 판별 (path_keys 길이가 1)
+                if len(path_keys) == 1:
+                    root_nodes.append(node)
+                elif len(path_keys) > 1:
+                    # 부모 노드의 children에 추가
+                    parent_key = path_keys[-2]
+                    if parent_key in node_map:
+                        # 중복 추가 방지
+                        if node not in node_map[parent_key]["children"]:
+                            node_map[parent_key]["children"].append(node)
+
+            LOGGER.debug("[TREE_BUILD] Built %d root nodes from %d total nodes",
+                        len(root_nodes), len(node_map))
+
+            return root_nodes
+
+        except Exception as e:
+            LOGGER.exception("[TREE_BUILD][ERROR] %s", e)
+            return []
+
+    def _attach_models_to_categories(self, category_tree: List[Dict[str, Any]]) -> None:
+        """
+        카테고리 트리의 각 카테고리 노드에 CONTAINS_MODEL 관계의 Model 추가
+
+        Args:
+            category_tree: 카테고리 트리 (수정됨 - in-place)
+        """
+        try:
+            for category_node in category_tree:
+                category_key = category_node.get("value")
+
+                if category_key:
+                    # 해당 카테고리의 하위 모델 조회
+                    models = self.fetch_models_under_category(category_key)
+
+                    # 모델을 children에 추가
+                    for model in models:
+                        model_node = {
+                            "value": model.get("model_key"),
+                            "title": model.get("name") or model.get("model_key"),
+                            "is_category": False,
+                            "next_model_key": model.get("next_model_key"),
+                            "prev_model_key": model.get("prev_model_key"),
+                            "_raw": model
+                        }
+                        category_node["children"].append(model_node)
+
+                # 하위 카테고리에 대해서도 재귀 처리
+                if "children" in category_node and category_node["children"]:
+                    child_categories = [c for c in category_node["children"] if c.get("is_category")]
+                    if child_categories:
+                        self._attach_models_to_categories(child_categories)
+
+            LOGGER.debug("[ATTACH_MODELS] Completed attaching models to categories")
+
+        except Exception as e:
+            LOGGER.exception("[ATTACH_MODELS][ERROR] %s", e)

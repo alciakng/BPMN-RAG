@@ -21,10 +21,10 @@ def intro():
             """,
             unsafe_allow_html=True
         )
-
+        
         # Add spacing
         st.markdown("<br>", unsafe_allow_html=True)
-
+        
         # Welcome message
         st.markdown(
             """
@@ -35,10 +35,10 @@ def intro():
             """,
             unsafe_allow_html=True
         )
-
+        
         # Feature sections as clickable cards with buttons
         col1, col2 = st.columns(2, gap="large")
-
+        
         # BPMN Upload Section Button
         with col1:
             st.markdown(
@@ -79,7 +79,7 @@ def intro():
         st.markdown(
             """
             <div style='text-align: center; color: #606060; font-size: 1.1rem; margin-top: 3rem;'>
-                Created by JongHwan Kim ·
+                Created by JongHwan Kim · 
                 <a href='https://github.com/alciakng' target='_blank' style='color: #00D26A; text-decoration: none;'>
                     GitHub
                 </a>
@@ -95,9 +95,9 @@ def intro():
             email="kjhweb@outlook.kr",
             message_type="info"
         )
-
+        
         LOGGER.info("Intro page rendered successfully")
-
+        
     except Exception as e:
         # Error handling with logging
         LOGGER.error(f"Error rendering intro page: {str(e)}", exc_info=True)
@@ -116,14 +116,14 @@ def main_board():
         # Initialize session state for menu selection if not exists
         if 'selected_menu' not in st.session_state:
             st.session_state.selected_menu = "Main"
-
+        
         # Get selected menu from sidebar
         selected = sidebar_menu()
-
+        
         # Update session state if sidebar selection changes
         if selected != st.session_state.selected_menu:
             st.session_state.selected_menu = selected
-
+        
         # Route to appropriate page based on session state
         if st.session_state.selected_menu.startswith("Main"):
             intro()
@@ -131,9 +131,9 @@ def main_board():
             render_loader()
         elif st.session_state.selected_menu.startswith("프로세스 분석"):
             handle_agent_response()
-
+            
         LOGGER.info(f"Navigated to: {st.session_state.selected_menu}")
-
+        
     except Exception as e:
         LOGGER.error(f"Error in main_board navigation: {str(e)}", exc_info=True)
         st.error("네비게이션 오류가 발생했습니다. 다시 시도해주세요.")
@@ -147,16 +147,16 @@ def sidebar_menu():
     try:
         with st.sidebar:
             st.title("BPMN AI-Agent")
-
+            
             selected = st.radio(
                 "메뉴 선택",
                 ["Main", "BPMN 적재", "프로세스 분석"],
                 index=["Main", "BPMN 적재", "프로세스 분석"].index(st.session_state.get('selected_menu', 'Main')) if st.session_state.get('selected_menu', 'Main') in ["Main", "BPMN 적재", "프로세스 분석"] else 0,
                 label_visibility="collapsed"
             )
-
+            
         return selected
-
+        
     except Exception as e:
         LOGGER.error(f"Error rendering sidebar: {str(e)}", exc_info=True)
         return "Main"  # Default fallback
@@ -193,14 +193,6 @@ def popup(
         email: Email address to display (optional)
         message_type: Type of notification ('info', 'success', 'warning', 'error')
 
-    Example:
-        >>> popup(
-        >>>     title="사용기한 안내",
-        >>>     body="서비스 이용 기간에 대한 안내입니다.",
-        >>>     contact="문의사항이 있으시면 연락주세요.",
-        >>>     email="contact@example.com",
-        >>>     message_type="warning"
-        >>> )
     """
     try:
         # Color mapping based on message type

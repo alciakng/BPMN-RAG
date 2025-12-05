@@ -8,11 +8,12 @@ import streamlit as st
 
 
 from manager.session_store import SessionStore
+from manager.vector_store import FaissStore
 from manager.reader import Reader
 from agent.query_interpreter import QueryInterpreter
 from agent.context_composer import ContextComposer
 from agent.graph_query_agent import GraphQueryAgent
-from common.llm_client import LLMClient  
+from common.llm_client import LLMClient
 from common.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,11 @@ def init_app() -> Dict[str, Optional[Any]]:
             st.session_state.session_store = SessionStore()
         session_store = st.session_state.session_store
 
+        # Vector store (FAISS)
+        if "vector_store" not in st.session_state:
+            st.session_state.vector_store = FaissStore()
+        vector_store = st.session_state.vector_store
+
         # Reader (Neo4j)
         if "reader" not in st.session_state:
 
@@ -59,6 +65,9 @@ def init_app() -> Dict[str, Optional[Any]]:
             open_api_key = st.secrets["OPENAI_API_KEY"]
             st.session_state.llm_client = LLMClient(open_api_key)
         llm = st.session_state.llm_client
+
+        # Set LLM client for vector store (for embeddings)
+        vector_store.set_llm_client(llm)
 
         # Interpreter & Composer
         if "interpreter" not in st.session_state:
@@ -80,7 +89,7 @@ def init_app() -> Dict[str, Optional[Any]]:
         agent = st.session_state.agent
 
         logger.info("[INIT] done; session_id=%s", session_id)
-        return {"session_id": session_id, "agent": agent, "session_store": session_store}
+        return {"session_id": session_id, "agent": agent, "session_store": session_store, "vector_store": vector_store}
     except Exception as e:
         logger.exception("[INIT][ERROR] %s", e)
         return {"session_id": None, "agent": None, "session_store": None}

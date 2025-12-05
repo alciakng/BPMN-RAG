@@ -6,9 +6,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import streamlit as st
 
 from manager.reader import Reader
+from manager.vector_store import FaissStore
 from common.logger import Logger
 from common.util import filename_key, upload_image_to_s3
-from bpmn2neo.settings import ContainerSettings 
+from bpmn2neo.settings import ContainerSettings
 
 from agent.graph_query_agent import GraphQueryAgent
 from manager.session_store import SessionStore
@@ -25,6 +26,9 @@ def _get_reader() -> Reader:
 def _get_session_store() -> SessionStore:
     return st.session_state.get("session_store")
 
+def _get_vector_store() -> FaissStore:
+    return st.session_state.get("vector_store")
+
 def _get_session_id() -> Optional[str]:
     return st.session_state.get("session_id")
 
@@ -36,9 +40,24 @@ def ingest_and_register_bpmn(
     agent: Optional[GraphQueryAgent] = None,
     session_store: Optional[SessionStore] = None,
     session_id: Optional[str] = None,
+    parent_category_key: Optional[str] = None,
+    predecessor_model_key: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     """
     Ingest a BPMN file, index it, and optionally register the uploaded model key.
+
+    Args:
+        file_path: Path to BPMN file
+        filename: Filename to use as model key
+        container_settings: Container settings
+        agent: GraphQueryAgent instance (optional)
+        session_store: SessionStore instance (optional)
+        session_id: Session ID (optional)
+        parent_category_key: Parent category key (for CONTAINS_MODEL relationship)
+        predecessor_model_key: Predecessor model key (for NEXT_PROCESS relationship)
+
+    Returns:
+        Dictionary with model_key and model_name
     """
     try:
         # Resolve dependencies
@@ -52,7 +71,13 @@ def ingest_and_register_bpmn(
             return {"model_key": None, "model_name": None}
 
         LOGGER.info("[HANDLER][INGEST] start %s",
-                    json.dumps({"filename": filename, "file_path": file_path, "session_id": sid}, ensure_ascii=False))
+                    json.dumps({
+                        "filename": filename,
+                        "file_path": file_path,
+                        "session_id": sid,
+                        "parent_category_key": parent_category_key,
+                        "predecessor_model_key": predecessor_model_key
+                    }, ensure_ascii=False))
 
         # --- decision based on container_settings.type / container_type ---
         ctype = None
@@ -67,30 +92,15 @@ def ingest_and_register_bpmn(
             ctype = None
 
         ctype_str = (str(ctype).strip().lower()) if ctype is not None else None
-        #embed = (ctype_str == "bp")
         persist = (ctype_str == "upd")
 
-        """
-        if embed: 
-            # Ingest & index
-            info = ag.ingest_and_index_bpmn(
-                file_path=file_path,
-                filename=filename,
-                container_settings=container_settings,
-            ) or {}
-        else:
-            # Ingest 
-            info = ag.ingest_bpmn(
-                file_path=file_path,
-                filename=filename,
-                container_settings=container_settings,
-            ) or {}
-        """
-        # Ingest
-        info = ag.ingest_bpmn(
+        # Ingest with category and predecessor
+        info = ag.ingest_and_index_bpmn(
             file_path=file_path,
             filename=filename,
             container_settings=container_settings,
+            parent_category_key=parent_category_key,
+            predecessor_model_key=predecessor_model_key
         ) or {}
 
         model_key = info.get("model_key")
@@ -148,10 +158,13 @@ def answer_with_selected() -> str:
       - No parameters. Read candidates from session_store.get_candidates(session_id).
       - Build analysis lifecycle using model_keys extracted from objects.
       - Use prompt_message from session_state['last_prompt_message'] if available; fallback otherwise.
+      - Implements context offloading: aggregates recent history (limit 1) with
+        vector-similar Q&A pairs (top 2) from FAISS store.
     """
     try:
         agent = _get_agent()
         session_store = _get_session_store()
+        vector_store = _get_vector_store()
         session_id = _get_session_id()
 
         uploaded_model_key = session_store.get_uploaded_model(session_id)
@@ -173,32 +186,75 @@ def answer_with_selected() -> str:
             analysis_id = cur_analysis
 
         # Build chat_history and append user turn
-        history = session_store.get_history(session_id, analysis_id) 
         session_store.append_history(session_id, analysis_id, role="user", content=user_query)
 
-        # Refresh short history (last 10) for agent
-        history = session_store.get_history(session_id, analysis_id, limit=10)
+        # Context offloading: Aggregate recent + vector-similar history
+        # 1. Get most recent Q&A pair (limit=1 from session_store)
+        recent_history = session_store.get_history(session_id, analysis_id, limit=1)
 
-        # Resolve prompt
-        """
-        prompt_message = st.session_state.get("last_prompt_message")
-        if not prompt_message:
+        # 2. Search for similar Q&A pairs from vector store (top 2)
+        similar_history = []
+        if vector_store:
             try:
-                prompt_message = agent._fallback_prompt(uploaded_model_key)
-            except Exception:
-                prompt_message = "Write a structured answer by model sections."
-        """
+                similar_pairs = vector_store.search_similar(
+                    session_id=session_id,
+                    query=user_query,
+                    top_k=2
+                )
 
-        # Ask agent with history (no selected keys / snapshot in params)
+                # Convert similar pairs to chat history format
+                for pair in similar_pairs:
+                    similar_history.append({
+                        "role": "user",
+                        "content": pair["query"],
+                        "ts": pair["timestamp"]
+                    })
+                    similar_history.append({
+                        "role": "assistant",
+                        "content": pair["answer"],
+                        "ts": pair["timestamp"]
+                    })
+
+                LOGGER.info("[HANDLER][ANS] Found %d similar Q&A pairs from vector store", len(similar_pairs))
+            except Exception as ve:
+                LOGGER.warning("[HANDLER][ANS] Vector search failed: %s", ve)
+
+        # 3. Aggregate: similar history + recent history (chronologically)
+        aggregated_history = similar_history + recent_history
+
+        # Sort by timestamp if available
+        aggregated_history.sort(key=lambda x: x.get("ts", 0))
+
+        LOGGER.info(
+            "[HANDLER][ANS] Context offloading: recent=%d similar=%d aggregated=%d",
+            len(recent_history), len(similar_history), len(aggregated_history)
+        )
+
+        # Ask agent with aggregated history
         text = agent.answer_with_selected(
             user_query=user_query,
             uploaded_model_key=uploaded_model_key,
-            chat_history=history,
+            chat_history=aggregated_history,
         )
 
-        # Append assistant turn
+        # Append assistant turn to session store
         session_store.append_history(session_id, analysis_id, role="assistant", content=text)
         LOGGER.info("[HANDLER][ANS] stored assistant turn len=%d", len(text or ""))
+
+        # Save Q&A pair to vector store for future similarity search
+        if vector_store:
+            try:
+                success = vector_store.add_qa_pair(
+                    session_id=session_id,
+                    query=user_query,
+                    answer=text
+                )
+                if success:
+                    LOGGER.info("[HANDLER][ANS] Saved Q&A pair to vector store")
+                else:
+                    LOGGER.warning("[HANDLER][ANS] Failed to save Q&A pair to vector store")
+            except Exception as ve:
+                LOGGER.exception("[HANDLER][ANS] Error saving to vector store: %s", ve)
 
         return text
     except Exception as e:
