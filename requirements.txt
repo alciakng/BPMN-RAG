@@ -8,4 +8,10 @@ streamlit==1.50.0
 streamlit_agraph==0.0.45
 streamlit_extras==0.7.8
 streamlit_option_menu==0.4.0
-streamlit-tree-select==0.0.7
+streamlit-tree-select==0.0.5
+
+# Vector Store Dependencies
+pinecone>=5.0.0
+pinecone-client>=3.0.0
+faiss-cpu>=1.7.4
+numpy>=1.24.0
