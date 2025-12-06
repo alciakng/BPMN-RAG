@@ -6,6 +6,7 @@ from ui.component.layout import render_app_layout
 from ui.component.chat import handle_agent_response
 
 
+
 def main():
     # Initialize the agent (kept in st.session_state.agent)
     init_app()

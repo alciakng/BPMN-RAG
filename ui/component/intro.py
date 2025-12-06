@@ -12,11 +12,11 @@ def intro():
     Displays welcome message and feature descriptions.
     """
     try:
-        # Page title with custom styling - BPMN in green color
+        # Page title with custom styling - BPMN in blue color
         st.markdown(
             """
             <h1 style='text-align: center; font-size: 3.5rem;'>
-                <span style='color: #00D26A;'>BPMN</span> AI-Agent
+                <span style='color: #0e76a8;'>BPMN</span> AI-Agent
             </h1>
             """,
             unsafe_allow_html=True
@@ -43,12 +43,12 @@ def intro():
         with col1:
             st.markdown(
                 """
-                <div style='background-color: #1E3A5F; padding: 2rem; border-radius: 10px; height: 100%; '>
-                    <h2 style='color: #00D26A; margin-bottom: 1rem; text-align: center;'>BPMN 적재</h2>
+                <div style='padding: 2rem; border-radius: 10px; height: 100%; border: 2px solid #0e76a8; background-color: #f8f9fa;'>
+                    <h2 style='color: #0e76a8; margin-bottom: 1rem; text-align: center;'>BPMN 적재</h2>
                     <p style='font-size: 1.1rem; line-height: 1.8; margin-left: 2rem'>
                         • BPMN 파일 업로드 및 GraphDB(Neo4j) 변환 적재<br>
                         • GraphDB 시각화(OverallProcess • 메시지 플로우 • DATA I/O)<br>
-                        • Powered by  <a href='https://github.com/alciakng/bpmn2neo' target='_blank' style='color: #00D26A; text-decoration: none;'>
+                        • Powered by  <a href='https://github.com/alciakng/bpmn2neo' target='_blank' style='color: #0e76a8; text-decoration: none;'>
                                     bpmn2neo
                                      </a>
                     </p>
@@ -62,8 +62,8 @@ def intro():
         with col2:
             st.markdown(
                 """
-                <div style='background-color: #1E3A5F; padding: 2rem; border-radius: 10px; height: 100%; '>
-                    <h2 style='color: #00D26A; margin-bottom: 1rem;text-align: center;'>프로세스 분석</h2>
+                <div style='padding: 2rem; border-radius: 10px; height: 100%; border: 2px solid #0e76a8; background-color: #f8f9fa;'>
+                    <h2 style='color: #0e76a8; margin-bottom: 1rem;text-align: center;'>프로세스 분석</h2>
                     <p style='font-size: 1.1rem; line-height: 1.8; margin-left: 2rem'>
                         • BPMN GraphDB 기반 프로세스 마이닝 에이전트<br>
                         • 프로세스의 흐름 및 맥락에 기반한 정확한 답변 제공<br>
@@ -79,8 +79,8 @@ def intro():
         st.markdown(
             """
             <div style='text-align: center; color: #606060; font-size: 1.1rem; margin-top: 3rem;'>
-                Created by JongHwan Kim · 
-                <a href='https://github.com/alciakng' target='_blank' style='color: #00D26A; text-decoration: none;'>
+                Created by JongHwan Kim ·
+                <a href='https://github.com/alciakng' target='_blank' style='color: #0e76a8; text-decoration: none;'>
                     GitHub
                 </a>
             </div>
@@ -88,13 +88,15 @@ def intro():
             unsafe_allow_html=True
         )
 
+        """
         popup(
             title="사용기한 안내",
-            body="~11.14일 까지 무료로 이용 가능합니다.\n이후에는 Neo4j 과금이슈로 서비스가 중단될 수 있습니다.",
+            body="~12.12일 까지 무료로 이용 가능합니다.\n이후에는 Neo4j 과금이슈로 서비스가 중단될 수 있습니다.",
             contact="추가 사용을 원하실 경우 연락바랍니다.",
             email="kjhweb@outlook.kr",
             message_type="info"
         )
+        """ 
         
         LOGGER.info("Intro page rendered successfully")
         
@@ -197,13 +199,13 @@ def popup(
     try:
         # Color mapping based on message type
         color_map = {
-            "info": "#1f6feb",
+            "info": "#0e76a8",
             "success": "#00D26A",
             "warning": "#f4a261",
             "error": "#e63946"
         }
 
-        border_color = color_map.get(message_type, "#1f6feb")
+        border_color = color_map.get(message_type, "#f4f6f6")
 
         # Title section
         st.markdown(
@@ -234,7 +236,7 @@ def popup(
             st.markdown(
                 f"""
                 <div style='
-                    background-color: #1E3A5F;
+                    background-color: #0e76a8;
                     padding: 1.5rem;
                     border-radius: 10px;
                     border-left: 5px solid {border_color};

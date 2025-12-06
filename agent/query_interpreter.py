@@ -85,11 +85,16 @@ class QueryInterpreter:
             top_models = sorted(candidates, key=lambda c: c["score_total"], reverse=True)[: self.n]
             LOGGER.info("[05.SELECT] topN=%d", len(top_models))
 
-            # 6) Prompt message
-            prompt_message = self._generate_prompt_message(user_query, uploaded_model_key, top_models)
-            LOGGER.info("[06.PROMPT] len=%s", prompt_message)
+            # 6) Build category hierarchy for top models
+            model_keys = [m["model_key"] for m in top_models if m.get("model_key")]
+            category_tree = self.reader.fetch_category_hierarchy_for_models(model_keys)
+            LOGGER.info("[06.HIERARCHY] Built category tree with %d roots", len(category_tree))
 
-            return {"candidates": top_models, "prompt_message": prompt_message}
+            # 7) Prompt message
+            prompt_message = self._generate_prompt_message(user_query, uploaded_model_key, top_models)
+            LOGGER.info("[07.PROMPT] len=%s", prompt_message)
+
+            return {"candidates": category_tree, "prompt_message": prompt_message}
         except Exception as e:
             LOGGER.exception("[INTERPRET][ERROR] %s", e)
             return {

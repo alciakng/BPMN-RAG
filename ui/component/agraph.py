@@ -106,7 +106,7 @@ def _make_nodes_edges(
                     size=size,
                     color=color,
                     shape="dot",
-                    font={'color': '#ffffff', 'size': 14}  # White text
+                    font={'color': "#000000", 'size': 14}  # White text
                 )
             )
 
@@ -129,7 +129,7 @@ def _make_nodes_edges(
                     source=src,
                     target=tgt,
                     label=str(e.get("label") or ""),
-                    font={'color': "#6ddcf8", 'size': 12}  # Light blue text
+                    font={'color': "#000000", 'size': 12}  # Light blue text
                 )
             )
             
@@ -225,7 +225,7 @@ def render_graph_for_model(model_key: str) -> None:
     try:
         tabs = st.tabs([
             "Overall Process",
-            "Message Flow", 
+            "Message Flow",
             "Subprocess",
             "Data I/O"
         ])
@@ -237,7 +237,7 @@ def render_graph_for_model(model_key: str) -> None:
             ("dataio", "Data I/O Graph"),
         ]
 
-        # Render each tab
+        # Render all tabs immediately (not lazy)
         for idx, (tab, (view_key, title)) in enumerate(zip(tabs, view_specs)):
             with tab:
                 try:

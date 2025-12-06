@@ -60,9 +60,9 @@ def render_selected_models_sidebar() -> None:
                 # Custom HTML list for analysis models
                 models_html = "".join([
                     f"""
-                    <div style='padding: 10px 15px; margin-bottom: 10px; background: #262730; 
+                    <div style='padding: 10px 15px; margin-bottom: 10px; background: #ffffff; 
                                 border-left: 3px solid #1f6feb; border-radius: 6px;'>
-                        <span style='color: #ffffff; font-size: 14px;'>▪ {model}</span>
+                        <span style='color: #000000; font-size: 14px;'>▪ {model}</span>
                     </div>
                     """ 
                     for model in selected_models
@@ -130,10 +130,25 @@ def render_candidates_selector(
     session_ns: str = "cand",
 ) -> Optional[List[str]]:
     """
-    Controller that opens a dialog for candidate selection and returns the chosen keys.
-    Contract:
-      - Returns List[str] after user confirms in dialog.
-      - Returns None if not confirmed yet / canceled / closed.
+    Controller that opens a dialog for candidate selection using tree_select.
+
+    Args:
+        candidates: Category hierarchy tree in streamlit_tree_select format
+            [
+                {
+                    "label": "Category Name",
+                    "value": "category_key",
+                    "children": [
+                        {"label": "Model Name", "value": "model_key"}
+                    ]
+                }
+            ]
+        title: Dialog title
+        open_button_label: Optional button label to open dialog
+        session_ns: Session namespace prefix
+
+    Returns:
+        List of selected model keys (leaf nodes only) or None
     """
     try:
         # --- 0) Guard
@@ -141,33 +156,40 @@ def render_candidates_selector(
             st.info("선택할 후보 모델이 없습니다.")
             return None
 
-        # --- 1) Build stable keys & labels
-        model_keys: List[str] = []
-        labels: List[str] = []
-        for c in candidates:
-            mk = (c.get("model_key") or "").strip()
-            mn = (c.get("model_name") or mk) or "Unnamed"
-            if mk:
-                model_keys.append(mk)
-                labels.append(f"{mn} · {mk}")
-
-        if not model_keys:
-            st.warning("후보 모델에 model_key가 없습니다.")
+        # Import tree_select
+        try:
+            from streamlit_tree_select import tree_select
+        except ImportError:
+            LOGGER.error("[CAND][TREE] streamlit_tree_select not installed")
+            st.error("streamlit_tree_select 라이브러리가 설치되지 않았습니다. `pip install streamlit-tree-select`를 실행하세요.")
             return None
 
-        key_suffix = str(abs(hash(tuple(model_keys))))
+        # --- 1) Build unique namespace
+        # Extract all leaf model keys for hash
+        def extract_model_keys(nodes):
+            keys = []
+            for node in nodes:
+                if not node.get("_is_category", True):  # Leaf node (model)
+                    if "value" in node:
+                        keys.append(node["value"])
+                if "children" in node:
+                    keys.extend(extract_model_keys(node["children"]))
+            return keys
+
+        all_model_keys = extract_model_keys(candidates)
+        if not all_model_keys:
+            st.warning("후보 모델에 선택 가능한 모델이 없습니다.")
+            return None
+
+        key_suffix = str(abs(hash(tuple(sorted(all_model_keys)))))
         ns = f"{session_ns}_{key_suffix}"
 
         # --- 2) Session keys
-        open_flag_key      = f"{ns}_open"
-        selected_state_key = f"{ns}_selected"   # temp set of selected keys
-        confirmed_key      = f"{ns}_confirmed"  # final chosen list
+        open_flag_key = f"{ns}_open"
+        confirmed_key = f"{ns}_confirmed"
 
-        # set Default True
+        # Set default open
         st.session_state[open_flag_key] = True
-        # Ensure state container
-        if selected_state_key not in st.session_state:
-            st.session_state[selected_state_key] = set()
 
         # --- Optional open button
         if open_button_label:
@@ -175,56 +197,62 @@ def render_candidates_selector(
                 st.session_state[open_flag_key] = True
 
         # --- 3) Define dialog (modal) once
-        @st.dialog(title, width="small")
+        @st.dialog(title, width="large")
         def _modal():
-            """Dialog UI – cannot return to caller; must set state and rerun."""
+            """Dialog UI with tree_select."""
             try:
-                st.success("질의에 매칭되는 후보모델을 식별하였습니다. 분석을 진행할 모델을 선택하세요. (복수선택 가능)")
+                st.success("질의에 매칭되는 후보모델을 식별하였습니다. 카테고리별로 분석을 진행할 모델을 선택하세요. (복수선택 가능)")
                 st.write("")
 
-                list_height = 320
-                # Checkbox list
-                with st.container(height=list_height, border=True):
-                    for mk, label in zip(model_keys, labels):
-                        ckey = f"{ns}_chk_{mk}"
-                        checked = mk in st.session_state[selected_state_key]
-                        new_val = st.checkbox(label, key=ckey, value=checked)
-                        if new_val:
-                            st.session_state[selected_state_key].add(mk)
-                        else:
-                            st.session_state[selected_state_key].discard(mk)
+                # Tree select component (clean, no custom styling)
+                selected = tree_select(
+                    candidates,  # First positional argument is the tree data
+                    expanded=[node["value"] for node in candidates],  # Expand all categories
+                    show_expand_all=True,  # Show expand/collapse all button
+                    key=f"{ns}_tree"
+                )
 
+                LOGGER.info("[CAND][TREE] Tree selection result: %s", selected)
 
+                # Confirmation button
+                st.write("")
                 if st.button("✓ 확인", key=f"{ns}_ok", type="primary", use_container_width=True):
-                    chosen = sorted(list(st.session_state[selected_state_key]))
+                    # Extract selected model keys (leaf nodes only)
+                    chosen = selected.get("checked", []) if selected else []
+
+                    # Filter only model keys (exclude category keys)
+                    model_keys_only = [k for k in chosen if k in all_model_keys]
+
                     LOGGER.info(
-                        "[CAND][CONFIRM] %d selected", len(chosen),
-                        extra={"selected": chosen, "count": len(chosen)}
+                        "[CAND][CONFIRM] %d models selected from tree: %s",
+                        len(model_keys_only),
+                        model_keys_only
                     )
+
                     # Save result, close dialog on next run
-                    st.session_state[confirmed_key] = chosen
+                    st.session_state[confirmed_key] = model_keys_only
                     st.session_state[open_flag_key] = False
                     st.rerun()
+                
+                
 
             except Exception as e:
                 LOGGER.exception("[CAND][DIALOG] modal failed: %s", e)
                 st.error("후보 선택 팝업을 표시하는 중 오류가 발생했습니다.")
 
-        # --- 5) Open dialog if flag set
+        # --- 4) Open dialog if flag set
         if st.session_state.get(open_flag_key, False):
             _modal()
 
-        # --- 6) If confirmed on the previous run, return it now (and clear)
+        # --- 5) If confirmed on the previous run, return it now (and clear)
         chosen: Optional[List[str]] = st.session_state.pop(confirmed_key, None)
         if chosen:
-            # (선택) 임시 선택 상태 초기화
-            st.session_state[selected_state_key] = set()
             return chosen
 
         return None
 
     except Exception as e:
-        LOGGER.exception("[CAND][DIALOG] render_candidates_selector_popup failed: %s", e)
+        LOGGER.exception("[CAND][DIALOG] render_candidates_selector failed: %s", e)
         st.error("후보 선택 팝업을 표시하는 중 오류가 발생했습니다.")
         return None
 

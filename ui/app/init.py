@@ -28,10 +28,36 @@ def init_app() -> Dict[str, Optional[Any]]:
     try:
         logger.info("[INIT] start")
 
-        # Ensure session id
+        # Ensure session id (browser session)
         if "session_id" not in st.session_state:
             st.session_state.session_id = os.urandom(8).hex()
         session_id = st.session_state.session_id
+
+        # Initialize chat sessions (multi-chat support)
+        if "chat_sessions" not in st.session_state:
+            # Create default first chat
+            default_chat_id = f"chat_{os.urandom(4).hex()}"
+            st.session_state.chat_sessions = {
+                default_chat_id: {
+                    "name": "대화 1",
+                    "created_at": os.urandom(4).hex(),  # Simple timestamp replacement
+                }
+            }
+            st.session_state.chat_session_id = default_chat_id
+
+        # Ensure current chat session id exists
+        if "chat_session_id" not in st.session_state:
+            # Fallback: use first chat if exists
+            if st.session_state.chat_sessions:
+                st.session_state.chat_session_id = list(st.session_state.chat_sessions.keys())[0]
+            else:
+                # Emergency: create new chat
+                new_chat_id = f"chat_{os.urandom(4).hex()}"
+                st.session_state.chat_sessions[new_chat_id] = {
+                    "name": "대화 1",
+                    "created_at": os.urandom(4).hex(),
+                }
+                st.session_state.chat_session_id = new_chat_id
 
         if "trigger_generate" not in st.session_state:
             st.session_state["trigger_generate"] = False

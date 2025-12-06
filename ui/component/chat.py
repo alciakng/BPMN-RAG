@@ -108,7 +108,8 @@ def _render_graph() -> None:
         # 3) Render only when keys exist
         if model_keys and len(model_keys) > 0:
             try:
-                with st.expander(label="모델 Graph Flow Diagram"):
+                # Use expanded=True to force initial rendering
+                with st.expander(label="모델 Graph Flow Diagram", expanded=True):
                     render_graph_with_selector(model_keys)
                 LOGGER.info("[GRAPH][RENDER] graph rendered successfully")
             except Exception as e:
@@ -272,7 +273,7 @@ def _do_task() -> None:
                             "role": "ai",
                             "content": answer_text,
                         })
-                        
+
                         LOGGER.info(
                             "[CHAT] Answer generated successfully"
                         )
@@ -414,19 +415,20 @@ def handle_agent_response() -> None:
         session_store = st.session_state.get("session_store")
         session_id = st.session_state.get("session_id")
         agent = st.session_state.get("agent")
-        
+
         if not agent:
             LOGGER.error("[CHAT] Agent not found in session_state")
             st.error("Agent not initialized. Please refresh the page.")
             return
-        
+
         # Initialize session components
         _ensure_history(
             "BPMN 프로세스 기반 프로세스 마이닝 AI-Agent 입니다. "
             "Guide 메뉴를 참고하여 질의를 수행하여 주십시오."
         )
+
         # Check if selector is pending - if so, hide input box
-        has_pending = _has_pending()     
+        has_pending = _has_pending()
 
         # Render history (including selector if present)
         _do_task()

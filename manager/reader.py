@@ -1114,6 +1114,212 @@ class Reader:
             LOGGER.exception("[TREE_BUILD][ERROR] %s", e)
             return []
 
+    def fetch_category_hierarchy_for_models(self, model_keys: List[str]) -> List[Dict[str, Any]]:
+        """
+        주어진 모델들이 속한 카테고리 계층 구조를 조회하여 streamlit_tree_select 형식으로 반환
+
+        Args:
+            model_keys: 모델 키 리스트
+
+        Returns:
+            streamlit_tree_select 형식의 트리 데이터
+            [
+                {
+                    "label": "Category Name",
+                    "value": "category_key",
+                    "children": [
+                        {
+                            "label": "Subcategory Name",
+                            "value": "subcategory_key",
+                            "children": [
+                                {"label": "Model Name", "value": "model_key"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        """
+        try:
+            LOGGER.info("[CATEGORY_HIERARCHY] Fetching hierarchy for %d models", len(model_keys))
+
+            if not model_keys:
+                return []
+
+            cypher = """
+            // 주어진 모델들이 속한 카테고리 찾기
+            MATCH (m:BPMNModel)
+            WHERE m.modelKey IN $model_keys
+
+            // 카테고리와의 CONTAINS_MODEL 관계
+            MATCH (cat:Category)-[:CONTAINS_MODEL]->(m)
+
+            // 카테고리의 상위 계층 찾기 (재귀적으로 HAS_SUBCATEGORY 역방향)
+            OPTIONAL MATCH path = (root:Category)-[:HAS_SUBCATEGORY*0..]->(cat)
+            WHERE NOT EXISTS((root)<-[:HAS_SUBCATEGORY]-(:Category))
+
+            WITH root, cat, m, path
+
+            RETURN DISTINCT
+                root.modelKey AS root_key,
+                root.name AS root_name,
+                cat.modelKey AS category_key,
+                cat.name AS category_name,
+                m.modelKey AS model_key,
+                m.name AS model_name,
+                CASE
+                    WHEN path IS NULL THEN [cat.modelKey]
+                    ELSE [node IN nodes(path) | node.modelKey]
+                END AS path_keys
+            ORDER BY path_keys, model_name
+            """
+
+            rows = self.repository.execute_single_query(cypher, {"model_keys": model_keys})
+
+            LOGGER.info("[CATEGORY_HIERARCHY] Query returned %d rows", len(rows))
+
+            # 트리 구조 구축
+            tree = self._build_category_model_tree(rows, model_keys)
+
+            LOGGER.info("[CATEGORY_HIERARCHY] Built tree with %d root nodes", len(tree))
+            return tree
+
+        except Exception as e:
+            LOGGER.exception("[CATEGORY_HIERARCHY][ERROR] %s", e)
+            return []
+
+    def _build_category_model_tree(self, rows: List[Dict[str, Any]], target_model_keys: List[str]) -> List[Dict[str, Any]]:
+        """
+        쿼리 결과를 streamlit_tree_select 형식의 트리로 변환
+
+        Args:
+            rows: Neo4j 쿼리 결과
+            target_model_keys: 대상 모델 키 목록
+
+        Returns:
+            streamlit_tree_select 형식 트리 데이터
+        """
+        try:
+            # 카테고리 노드 맵 {category_key: node}
+            category_map = {}
+            # 모델별 카테고리 맵 {model_key: category_key}
+            model_category_map = {}
+            # 카테고리가 실제로 카테고리인지 추적
+            is_category_flag = {}
+
+            # 1) 카테고리 노드 생성 및 계층 구조 파악
+            for row in rows:
+                path_keys = row.get("path_keys", [])
+                category_key = row.get("category_key")
+                model_key = row.get("model_key")
+
+                # 경로상의 모든 카테고리 노드 생성
+                for idx, cat_key in enumerate(path_keys):
+                    if cat_key not in category_map:
+                        # 카테고리 이름 가져오기
+                        if cat_key == category_key:
+                            cat_name = row.get("category_name", cat_key)
+                        elif idx == 0:
+                            cat_name = row.get("root_name", cat_key)
+                        else:
+                            cat_name = cat_key
+
+                        category_map[cat_key] = {
+                            "label": cat_name,
+                            "value": cat_key,
+                            "children": []
+                        }
+                        is_category_flag[cat_key] = True
+
+                # 모델-카테고리 매핑
+                if model_key:
+                    model_category_map[model_key] = category_key
+
+            # 2) 모델 노드 생성 및 카테고리에 추가
+            model_map = {}
+            for row in rows:
+                model_key = row.get("model_key")
+                if not model_key or model_key in model_map:
+                    continue
+
+                model_node = {
+                    "label": row.get("model_name") or model_key,
+                    "value": model_key
+                }
+                model_map[model_key] = model_node
+                is_category_flag[model_key] = False
+
+                # 해당 모델이 속한 카테고리에 추가
+                category_key = model_category_map.get(model_key)
+                if category_key and category_key in category_map:
+                    category_map[category_key]["children"].append(model_node)
+
+            # 3) 카테고리 계층 구조 연결
+            root_nodes = []
+            for row in rows:
+                path_keys = row.get("path_keys", [])
+                if len(path_keys) > 1:
+                    # 부모-자식 관계 연결
+                    for idx in range(len(path_keys) - 1):
+                        parent_key = path_keys[idx]
+                        child_key = path_keys[idx + 1]
+
+                        if parent_key in category_map and child_key in category_map:
+                            child_node = category_map[child_key]
+                            # 중복 방지
+                            if child_node not in category_map[parent_key]["children"]:
+                                category_map[parent_key]["children"].append(child_node)
+
+                # 루트 노드 식별
+                if len(path_keys) >= 1:
+                    root_key = path_keys[0]
+                    if root_key in category_map:
+                        root_node = category_map[root_key]
+                        if root_node not in root_nodes:
+                            root_nodes.append(root_node)
+
+            # 4) children이 비어있는 노드에서 children 속성 제거 (모델 노드)
+            def cleanup_tree(nodes):
+                for node in nodes:
+                    if "children" in node:
+                        if len(node["children"]) == 0:
+                            del node["children"]
+                        else:
+                            cleanup_tree(node["children"])
+
+            cleanup_tree(root_nodes)
+
+            LOGGER.debug("[TREE_BUILD] Built %d root nodes, %d categories, %d models",
+                        len(root_nodes), len(category_map), len(model_map))
+
+            # Store is_category_flag for later use in panels.py
+            for node in root_nodes:
+                self._mark_category_nodes(node, is_category_flag)
+
+            # Log complete tree structure for debugging
+            import json
+            try:
+                tree_json = json.dumps(root_nodes, indent=2, ensure_ascii=False)
+                LOGGER.info("[TREE_BUILD] Complete tree structure:\n%s", tree_json)
+            except Exception as je:
+                LOGGER.warning("[TREE_BUILD] Failed to serialize tree to JSON: %s", je)
+                LOGGER.info("[TREE_BUILD] Tree structure (repr): %s", root_nodes)
+
+            return root_nodes
+
+        except Exception as e:
+            LOGGER.exception("[TREE_BUILD][ERROR] %s", e)
+            return []
+
+    def _mark_category_nodes(self, node: Dict[str, Any], is_category_flag: Dict[str, bool]) -> None:
+        """Mark nodes with _is_category flag for filtering in panels.py"""
+        node_value = node.get("value")
+        if node_value in is_category_flag:
+            node["_is_category"] = is_category_flag[node_value]
+
+        if "children" in node:
+            for child in node["children"]:
+                self._mark_category_nodes(child, is_category_flag)
+
     def _attach_models_to_categories(self, category_tree: List[Dict[str, Any]]) -> None:
         """
         카테고리 트리의 각 카테고리 노드에 CONTAINS_MODEL 관계의 Model 추가

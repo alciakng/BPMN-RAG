@@ -94,31 +94,56 @@ class FaissStore:
         Args:
             llm_client: LLM client for generating embeddings (optional, can be set later)
         """
+        print("[PINECONE][INIT] FaissStore.__init__ called")  # DEBUG
         self.backend = None
+        self.backend_type = None  # 'pinecone', 'faiss', or 'memory'
         self.llm_client = llm_client
         self.embedding_dim = 1536  # OpenAI embedding dimension
 
         try:
             # Try to initialize Pinecone
-            url = st.secrets.get('FAISS_URL', None)
-            api_key = st.secrets.get('FAISS_API_KEY', None)
+            url = st.secrets.get('PINECONE_URL', None)
+            api_key = st.secrets.get('PINECONE_API_KEY', None)
+
+            print(f"[PINECONE][INIT] PINECONE_URL={url if url else 'NOT SET'} PINECONE_API_KEY={'***' + api_key[-4:] if api_key else 'NOT SET'}")  # DEBUG
+            LOGGER.info("[PINECONE][INIT] PINECONE_URL=%s PINECONE_API_KEY=%s",
+                       url if url else "NOT SET",
+                       "***" + api_key[-4:] if api_key else "NOT SET")
 
             if url and api_key:
                 try:
+                    LOGGER.info("[PINECONE][INIT] Attempting to connect to Pinecone...")
                     import pinecone
                     from pinecone import Pinecone, ServerlessSpec
 
                     # Initialize Pinecone client
                     pc = Pinecone(api_key=api_key)
+                    LOGGER.info("[PINECONE][INIT] Pinecone client initialized successfully")
 
                     # Extract index name from URL or use default
+                    # URL format: https://INDEX_NAME-PROJECT_ID.svc.ENVIRONMENT.pinecone.io
+                    # Extract the index name from the host
                     index_name = "qa-history"
-                    if "/" in url:
-                        index_name = url.split("/")[-1]
+                    if url:
+                        # Remove protocol if present
+                        clean_url = url.replace("https://", "").replace("http://", "")
+                        # Get the host part (before any path)
+                        host = clean_url.split("/")[0]
+                        # Extract index name (first part before the dash and project ID)
+                        # Format: bpmnrag-vqjsq16.svc... -> bpmnrag
+                        if "-" in host:
+                            index_name = host.split("-")[0]
+                        else:
+                            index_name = host.split(".")[0]
+
+                    LOGGER.info("[PINECONE][INIT] Extracted index name from URL: %s (from %s)", index_name, url)
 
                     # Check if index exists, create if not
                     existing_indexes = [idx.name for idx in pc.list_indexes()]
+                    LOGGER.info("[PINECONE][INIT] Existing indexes: %s", existing_indexes)
+
                     if index_name not in existing_indexes:
+                        LOGGER.info("[PINECONE][INIT] Index not found, creating index: %s", index_name)
                         pc.create_index(
                             name=index_name,
                             dimension=self.embedding_dim,
@@ -128,16 +153,20 @@ class FaissStore:
                                 region="us-east-1"
                             )
                         )
-                        LOGGER.info("[FAISS] Created Pinecone index: %s", index_name)
+                        LOGGER.info("[PINECONE][INIT] Created Pinecone index: %s", index_name)
+                    else:
+                        LOGGER.info("[PINECONE][INIT] Index already exists: %s", index_name)
 
                     self.backend = pc.Index(index_name)
-                    LOGGER.info("[FAISS] Connected to Pinecone: %s", index_name)
+                    self.backend_type = 'pinecone'
+                    LOGGER.info("[PINECONE][INIT] Successfully connected to Pinecone index: %s", index_name)
                     return
 
                 except Exception as e:
-                    LOGGER.warning("[FAISS] Pinecone initialization failed: %s", e)
+                    LOGGER.exception("[PINECONE][INIT] Pinecone initialization failed: %s", e)
 
             # Try local FAISS
+            LOGGER.info("[PINECONE][INIT] Pinecone not available, trying local FAISS...")
             try:
                 import faiss
 
@@ -145,18 +174,20 @@ class FaissStore:
                 self.backend = faiss.IndexFlatIP(self.embedding_dim)
                 # Store metadata separately (FAISS only stores vectors)
                 self.metadata: Dict[str, List[Dict[str, Any]]] = {}
-                LOGGER.info("[FAISS] Using local FAISS index")
+                self.backend_type = 'faiss'
+                LOGGER.info("[PINECONE][INIT] Using local FAISS index")
                 return
 
             except Exception as e:
-                LOGGER.warning("[FAISS] Local FAISS initialization failed: %s", e)
+                LOGGER.warning("[PINECONE][INIT] Local FAISS initialization failed: %s", e)
 
         except Exception as e:
-            LOGGER.warning("[FAISS] Vector store unavailable, falling back to memory. err=%s", e)
+            LOGGER.warning("[PINECONE][INIT] Vector store unavailable, falling back to memory. err=%s", e)
 
         # Fallback to in-memory
         self.backend = _MemoryVectorBackend(embedding_dim=self.embedding_dim)
-        LOGGER.info("[FAISS] Using in-memory vector backend")
+        self.backend_type = 'memory'
+        LOGGER.info("[PINECONE][INIT] Using in-memory vector backend")
 
     def set_llm_client(self, llm_client):
         """Set LLM client for generating embeddings."""
@@ -186,7 +217,8 @@ class FaissStore:
         self,
         session_id: str,
         query: str,
-        answer: str
+        answer: str,
+        model_keys: Optional[List[str]] = None
     ) -> bool:
         """
         Add a Q&A pair to the vector store with embedding.
@@ -195,67 +227,103 @@ class FaissStore:
             session_id: Session identifier
             query: User query
             answer: Assistant answer
+            model_keys: List of model keys to associate with this Q&A pair
 
         Returns:
             True if successful, False otherwise
         """
         try:
+            LOGGER.info("[PINECONE][ADD] Starting add_qa_pair session=%s model_keys=%s backend_type=%s",
+                       session_id, model_keys, self.backend_type)
+
             # Generate embedding for the query
             embedding = self._get_embedding(query)
             if not embedding:
-                LOGGER.warning("[FAISS] Cannot add Q&A pair without embedding")
+                LOGGER.warning("[PINECONE][ADD] Cannot add Q&A pair without embedding")
                 return False
 
-            # Store based on backend type
-            if isinstance(self.backend, _MemoryVectorBackend):
-                self.backend.add(session_id, query, answer, embedding)
+            LOGGER.info("[PINECONE][ADD] Generated embedding successfully, length=%d", len(embedding))
 
-            elif hasattr(self.backend, 'upsert'):  # Pinecone
-                # Create unique ID
-                vector_id = f"{session_id}_{int(time.time())}"
-                self.backend.upsert(
-                    vectors=[(
-                        vector_id,
-                        embedding,
-                        {
-                            "session_id": session_id,
+            # If no model_keys provided, use empty list
+            model_keys = model_keys or []
+
+            # Store for each model_key
+            success_count = 0
+            for model_key in model_keys:
+                LOGGER.info("[PINECONE][ADD] Processing model_key=%s", model_key)
+                try:
+                    # Store based on backend type
+                    if isinstance(self.backend, _MemoryVectorBackend):
+                        # For memory backend, use combined key
+                        combined_key = f"{session_id}_{model_key}"
+                        LOGGER.info("[PINECONE][ADD] Using memory backend, combined_key=%s", combined_key)
+                        self.backend.add(combined_key, query, answer, embedding)
+
+                    elif hasattr(self.backend, 'upsert'):  # Pinecone
+                        # Create unique ID with model_key
+                        vector_id = f"{session_id}_{model_key}_{int(time.time())}"
+                        LOGGER.info("[PINECONE][ADD] Using Pinecone backend, vector_id=%s", vector_id)
+
+                        upsert_data = [{
+                            "id": vector_id,
+                            "values": embedding,
+                            "metadata": {
+                                "session_id": session_id,
+                                "model_key": model_key,
+                                "query": query,
+                                "answer": answer,
+                                "timestamp": int(time.time())
+                            }
+                        }]
+
+                        LOGGER.info("[PINECONE][ADD] Upserting to Pinecone: vector_id=%s metadata_keys=%s",
+                                   vector_id, list(upsert_data[0]["metadata"].keys()))
+
+                        self.backend.upsert(vectors=upsert_data)
+
+                        LOGGER.info("[PINECONE][ADD] Successfully upserted to Pinecone")
+
+                    else:  # Local FAISS
+                        import faiss
+                        LOGGER.info("[PINECONE][ADD] Using local FAISS backend")
+                        # Normalize for cosine similarity
+                        emb_array = np.array([embedding], dtype=np.float32)
+                        faiss.normalize_L2(emb_array)
+                        self.backend.add(emb_array)
+
+                        # Store metadata with model_key
+                        combined_key = f"{session_id}_{model_key}"
+                        if combined_key not in self.metadata:
+                            self.metadata[combined_key] = []
+                        self.metadata[combined_key].append({
                             "query": query,
                             "answer": answer,
                             "timestamp": int(time.time())
-                        }
-                    )]
-                )
+                        })
+                        LOGGER.info("[PINECONE][ADD] Added to FAISS metadata, combined_key=%s", combined_key)
 
-            else:  # Local FAISS
-                import faiss
-                # Normalize for cosine similarity
-                emb_array = np.array([embedding], dtype=np.float32)
-                faiss.normalize_L2(emb_array)
-                self.backend.add(emb_array)
+                    success_count += 1
+                    LOGGER.info(
+                        "[PINECONE][ADD] Added Q&A pair session=%s model_key=%s query_len=%d answer_len=%d",
+                        session_id, model_key, len(query), len(answer)
+                    )
 
-                # Store metadata
-                if session_id not in self.metadata:
-                    self.metadata[session_id] = []
-                self.metadata[session_id].append({
-                    "query": query,
-                    "answer": answer,
-                    "timestamp": int(time.time())
-                })
+                except Exception as me:
+                    LOGGER.exception("[PINECONE][ADD][MODEL=%s][ERROR] %s", model_key, me)
 
-            LOGGER.info(
-                "[FAISS] Added Q&A pair session=%s query_len=%d answer_len=%d",
-                session_id, len(query), len(answer)
-            )
-            return True
+            LOGGER.info("[PINECONE][ADD] Completed add_qa_pair: success_count=%d total_models=%d",
+                       success_count, len(model_keys))
+            return success_count > 0
 
         except Exception as e:
-            LOGGER.exception("[FAISS][ADD][ERROR] %s", e)
+            LOGGER.exception("[PINECONE][ADD][ERROR] %s", e)
             return False
 
     def search_similar(
         self,
         session_id: str,
         query: str,
+        model_keys: Optional[List[str]] = None,
         top_k: int = 2
     ) -> List[Dict[str, Any]]:
         """
@@ -264,6 +332,7 @@ class FaissStore:
         Args:
             session_id: Session identifier
             query: Current query to find similar past queries
+            model_keys: List of model keys to filter search results
             top_k: Number of results to return
 
         Returns:
@@ -279,64 +348,122 @@ class FaissStore:
             ]
         """
         try:
+            LOGGER.info("[PINECONE][SEARCH] Starting search_similar session=%s model_keys=%s top_k=%d backend_type=%s",
+                       session_id, model_keys, top_k, self.backend_type)
+
             # Generate embedding for the query
             embedding = self._get_embedding(query)
             if not embedding:
-                LOGGER.warning("[FAISS] Cannot search without embedding")
+                LOGGER.warning("[PINECONE][SEARCH] Cannot search without embedding")
                 return []
+
+            LOGGER.info("[PINECONE][SEARCH] Generated embedding successfully, length=%d", len(embedding))
+
+            # If no model_keys provided, use empty list
+            model_keys = model_keys or []
 
             # Search based on backend type
             if isinstance(self.backend, _MemoryVectorBackend):
-                results = self.backend.search(session_id, embedding, top_k)
+                LOGGER.info("[PINECONE][SEARCH] Using memory backend")
+                # Search across all model_keys and aggregate results
+                all_results = []
+                for model_key in model_keys:
+                    combined_key = f"{session_id}_{model_key}"
+                    results = self.backend.search(combined_key, embedding, top_k)
+                    all_results.extend(results)
+
+                # Sort by similarity and return top_k
+                all_results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+                results = all_results[:top_k]
 
             elif hasattr(self.backend, 'query'):  # Pinecone
+                LOGGER.info("[PINECONE][SEARCH] Using Pinecone backend")
+                # Build filter for session_id and model_keys
+                if model_keys:
+                    # Filter by session_id AND model_key in list
+                    filter_dict = {
+                        "$and": [
+                            {"session_id": {"$eq": session_id}},
+                            {"model_key": {"$in": model_keys}}
+                        ]
+                    }
+                else:
+                    # Only filter by session_id
+                    filter_dict = {"session_id": {"$eq": session_id}}
+
+                LOGGER.info("[PINECONE][SEARCH] Query filter: %s", filter_dict)
+
                 response = self.backend.query(
                     vector=embedding,
                     top_k=top_k,
-                    filter={"session_id": session_id},
+                    filter=filter_dict,
                     include_metadata=True
                 )
 
+                LOGGER.info("[PINECONE][SEARCH] Pinecone query completed")
+
                 results = []
-                for match in response.matches:
+                matches = getattr(response, 'matches', [])
+                LOGGER.info("[PINECONE][SEARCH] Found %d matches from Pinecone", len(matches))
+
+                for match in matches:
+                    metadata = getattr(match, 'metadata', {})
+                    score = getattr(match, 'score', 0.0)
                     results.append({
-                        "query": match.metadata.get("query", ""),
-                        "answer": match.metadata.get("answer", ""),
-                        "similarity": float(match.score),
-                        "timestamp": match.metadata.get("timestamp", 0)
+                        "query": metadata.get("query", ""),
+                        "answer": metadata.get("answer", ""),
+                        "similarity": float(score),
+                        "timestamp": metadata.get("timestamp", 0)
                     })
+                    LOGGER.info("[PINECONE][SEARCH] Match: score=%.4f query_len=%d",
+                               score, len(metadata.get("query", "")))
 
             else:  # Local FAISS
+                LOGGER.info("[PINECONE][SEARCH] Using local FAISS backend")
                 import faiss
                 # Normalize query embedding
                 emb_array = np.array([embedding], dtype=np.float32)
                 faiss.normalize_L2(emb_array)
 
-                # Search
-                distances, indices = self.backend.search(emb_array, top_k)
+                # Search across all model_keys and aggregate results
+                all_results = []
+                for model_key in model_keys:
+                    combined_key = f"{session_id}_{model_key}"
+                    session_metadata = self.metadata.get(combined_key, [])
 
-                # Filter by session and construct results
-                results = []
-                session_metadata = self.metadata.get(session_id, [])
+                    LOGGER.info("[PINECONE][SEARCH] FAISS search for combined_key=%s metadata_count=%d",
+                               combined_key, len(session_metadata))
 
-                for i, (dist, idx) in enumerate(zip(distances[0], indices[0])):
-                    if idx >= 0 and idx < len(session_metadata):
-                        item = session_metadata[idx]
-                        results.append({
-                            "query": item["query"],
-                            "answer": item["answer"],
-                            "similarity": float(dist),
-                            "timestamp": item["timestamp"]
-                        })
+                    if not session_metadata:
+                        continue
+
+                    # Search in FAISS
+                    distances, indices = self.backend.search(emb_array, min(top_k, len(session_metadata)))
+
+                    # Filter by session+model and construct results
+                    for i, (dist, idx) in enumerate(zip(distances[0], indices[0])):
+                        if idx >= 0 and idx < len(session_metadata):
+                            item = session_metadata[idx]
+                            all_results.append({
+                                "query": item["query"],
+                                "answer": item["answer"],
+                                "similarity": float(dist),
+                                "timestamp": item["timestamp"]
+                            })
+                            LOGGER.info("[PINECONE][SEARCH] FAISS match: dist=%.4f idx=%d", dist, idx)
+
+                # Sort by similarity and return top_k
+                all_results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+                results = all_results[:top_k]
 
             LOGGER.info(
-                "[FAISS] Search completed session=%s query_len=%d results=%d",
-                session_id, len(query), len(results)
+                "[PINECONE][SEARCH] Search completed session=%s model_keys=%s query_len=%d results=%d",
+                session_id, model_keys, len(query), len(results)
             )
             return results
 
         except Exception as e:
-            LOGGER.exception("[FAISS][SEARCH][ERROR] %s", e)
+            LOGGER.exception("[PINECONE][SEARCH][ERROR] %s", e)
             return []
 
     def clear_session(self, session_id: str) -> None:

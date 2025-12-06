@@ -1,0 +1,17 @@
+# Vector Store Dependencies for FAISS Context Offloading
+# Install with: pip install -r requirements_vector_store.txt
+
+# FAISS - Facebook AI Similarity Search (local vector store)
+faiss-cpu>=1.7.4
+
+# OR for GPU support (optional, choose one):
+# faiss-gpu>=1.7.4
+
+# Pinecone - Cloud vector database (recommended for production)
+pinecone-client>=3.0.0
+
+# NumPy for vector operations (usually already installed)
+numpy>=1.24.0
+
+# OpenAI for embeddings (likely already installed)
+openai>=1.0.0

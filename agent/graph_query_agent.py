@@ -9,7 +9,7 @@ import streamlit as st
 from agent.context_composer import ContextComposer
 from agent.query_interpreter import QueryInterpreter
 from manager.reader import Reader
-from manager.util import json_dumps_safe, _extract_text
+from manager.util import _extract_text
 from common.llm_client import LLMClient
 from common.logger import Logger
 from bpmn2neo.settings import ContainerSettings, OpenAISettings, Neo4jSettings

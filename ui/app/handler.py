@@ -185,9 +185,6 @@ def answer_with_selected() -> str:
         else:
             analysis_id = cur_analysis
 
-        # Build chat_history and append user turn
-        session_store.append_history(session_id, analysis_id, role="user", content=user_query)
-
         # Context offloading: Aggregate recent + vector-similar history
         # 1. Get most recent Q&A pair (limit=1 from session_store)
         recent_history = session_store.get_history(session_id, analysis_id, limit=1)
@@ -196,9 +193,15 @@ def answer_with_selected() -> str:
         similar_history = []
         if vector_store:
             try:
+                # Get current model keys for filtering (selected + uploaded)
+                model_keys = list(selected_models) if selected_models else []
+                if uploaded_model_key and uploaded_model_key not in model_keys:
+                    model_keys.append(uploaded_model_key)
+
                 similar_pairs = vector_store.search_similar(
                     session_id=session_id,
                     query=user_query,
+                    model_keys=model_keys,
                     top_k=2
                 )
 
@@ -215,11 +218,15 @@ def answer_with_selected() -> str:
                         "ts": pair["timestamp"]
                     })
 
-                LOGGER.info("[HANDLER][ANS] Found %d similar Q&A pairs from vector store", len(similar_pairs))
+                LOGGER.info("[HANDLER][ANS] Found %d similar Q&A pairs from vector store (model_keys=%s)",
+                           len(similar_pairs), model_keys)
             except Exception as ve:
                 LOGGER.warning("[HANDLER][ANS] Vector search failed: %s", ve)
 
         # 3. Aggregate: similar history + recent history (chronologically)
+        LOGGER.info("[HANDLER][ANS] recent_history: %s", recent_history)
+        LOGGER.info("[HANDLER][ANS] similar_history: %s", similar_history)
+
         aggregated_history = similar_history + recent_history
 
         # Sort by timestamp if available
@@ -229,6 +236,7 @@ def answer_with_selected() -> str:
             "[HANDLER][ANS] Context offloading: recent=%d similar=%d aggregated=%d",
             len(recent_history), len(similar_history), len(aggregated_history)
         )
+        LOGGER.info("[HANDLER][ANS] aggregated_history: %s", aggregated_history)
 
         # Ask agent with aggregated history
         text = agent.answer_with_selected(
@@ -244,13 +252,19 @@ def answer_with_selected() -> str:
         # Save Q&A pair to vector store for future similarity search
         if vector_store:
             try:
+                # Get current model keys for storage (selected + uploaded)
+                model_keys = list(selected_models) if selected_models else []
+                if uploaded_model_key and uploaded_model_key not in model_keys:
+                    model_keys.append(uploaded_model_key)
+
                 success = vector_store.add_qa_pair(
                     session_id=session_id,
                     query=user_query,
-                    answer=text
+                    answer=text,
+                    model_keys=model_keys
                 )
                 if success:
-                    LOGGER.info("[HANDLER][ANS] Saved Q&A pair to vector store")
+                    LOGGER.info("[HANDLER][ANS] Saved Q&A pair to vector store (model_keys=%s)", model_keys)
                 else:
                     LOGGER.warning("[HANDLER][ANS] Failed to save Q&A pair to vector store")
             except Exception as ve:
