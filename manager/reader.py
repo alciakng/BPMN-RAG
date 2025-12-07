@@ -19,7 +19,6 @@ class Reader:
 
     def __init__(self, neo4j_config: Neo4jConfig,):
         try:
-            LOGGER.warning("[FETCH][INIT] Injected repository invalid; falling back to Neo4jRepository(neo4j_config).")
             self.repository = Neo4jRepository(neo4j_config)
             LOGGER.info("[FETCH][INIT] Repository created from neo4j_config.")
 
@@ -35,10 +34,18 @@ class Reader:
     # ------------------------------------------------------------------
     # 1) Hybrid search (consine)
     # ------------------------------------------------------------------
-    def search_candidates(self, user_query: str, qemb: Optional[List[float]], limit: int = 200) -> List[Dict[str, Any]]:
+    def search_candidates(self, user_query: str, qemb: Optional[List[float]], limit: int = 200, min_similarity: float = 0.3) -> List[Dict[str, Any]]:
         """
         One-shot retrieval:
         - Cosine via GDS gds.similarity.cosine(n.embedding_text, $qemb) if embedding exists.
+        - Filters results by minimum cosine similarity threshold (default: 0.3)
+
+        Args:
+            user_query: User query string
+            qemb: Query embedding vector
+            limit: Maximum number of results to return
+            min_similarity: Minimum cosine similarity threshold (0.0 ~ 1.0)
+                           Results below this threshold are filtered out
 
         Requirements:
         - Fulltext index created:
@@ -48,7 +55,7 @@ class Reader:
         - GDS library available.
         """
         try:
-            LOGGER.info("[02.RETR] hybrid query limit=%d emb=%s", limit, qemb is not None)
+            LOGGER.info("[02.RETR] hybrid query limit=%d emb=%s min_similarity=%.2f", limit, qemb is not None, min_similarity)
 
             cypher = """
             // 1) Gather model keys under the bp node (optionally narrowed by $bp_id).
@@ -69,6 +76,9 @@ class Reader:
                 THEN gds.similarity.cosine(n.context_vector, $qemb)
                 ELSE 0.0
             END AS cos_sim
+
+            // 3.5) Filter by minimum similarity threshold
+            WHERE cos_sim >= $min_similarity
 
             // 4) Resolve owning process/lane/participant/model (participants may not exist).
             OPTIONAL MATCH (pr1:Process)-[:HAS_LANE]->(l:Lane)-[:OWNS_NODE]->(n)
@@ -104,7 +114,12 @@ class Reader:
             ORDER BY cos_sim DESC
             LIMIT $limit;
             """
-            rows = self.repository.execute_single_query(cypher, {"q": user_query, "qemb": qemb, "limit": int(limit)})
+            rows = self.repository.execute_single_query(
+                cypher,
+                {"q": user_query, "qemb": qemb, "limit": int(limit), "min_similarity": float(min_similarity)}
+            )
+
+            LOGGER.info("[02.RETR] returned %d candidates (min_similarity=%.2f)", len(rows), min_similarity)
             return rows
         except Exception as e:
             LOGGER.exception("[02.RETR][HYBRID][ERROR] %s", e)
