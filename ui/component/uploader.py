@@ -178,7 +178,7 @@ def render_category_tree_viewer() -> None:
 
                     for model in sibling_models:
                         model_key = model.get("model_key")
-                        model_name = model.get("name") or model_key
+                        model_name = model_key
 
                         # Add node
                         nodes.append({
@@ -194,7 +194,7 @@ def render_category_tree_viewer() -> None:
                             edges.append({
                                 "source": model_key,
                                 "target": next_key,
-                                "label": "NEXT"
+                                "label": "NEXT_PROCESS"
                             })
 
                     LOGGER.info(f"[UPLOADER][GRAPH] Built graph with {len(nodes)} nodes, {len(edges)} edges")
