@@ -1329,7 +1329,7 @@ class Reader:
                     continue
 
                 model_node = {
-                    "label": row.get("model_name") or model_key,
+                    "label": model_key,
                     "value": model_key
                 }
                 model_map[model_key] = model_node
