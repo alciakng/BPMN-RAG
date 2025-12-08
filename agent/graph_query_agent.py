@@ -180,8 +180,15 @@ class GraphQueryAgent:
                                 [ROLE]
                                 - Act as a BPMN/Neo4j Graph-RAG expert and senior Process Innovation Consultant.
                                 - Precisely infer the query intent and deliver an accurate answer strictly grounded in the payload.
-                                
+
                                 [OPTIONAL — USE ONLY IF QUERY-RELEVANT]
+
+                                - Process Flow Diagram (use when query asks for overall process explanation):
+                                Use `model_flows` from the payload to identify predecessor/successor business models, then draw a simple flow diagram with arrows (→).
+                                Highlight the current model with **bold** and briefly explain its role within the flow (1-2 sentences).
+                                Structure: `[Category]`: predecessor models → **current model** → successor models
+                                Example: "`Order Management`: `Order Receipt` → `Credit Check` → **`Inventory Check`** → `Payment Processing` → `Shipping`
+                                This model validates stock availability after credit approval and before payment, ensuring order fulfillment readiness."
 
                                 - Problem Diagnosis Table (suggest using a table):
                                 Propose a compact table summarizing key issues and evidence.

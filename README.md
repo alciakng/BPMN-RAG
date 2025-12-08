@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.50.0-red.svg)](https://streamlit.io/)
 [![Neo4j](https://img.shields.io/badge/Neo4j-6.0+-008CC1?logo=neo4j)](https://neo4j.com/)
-[![bpmn2neo](https://img.shields.io/badge/bpmn2neo-0.1.9-green.svg)](https://github.com/alciakng/bpmn2neo)
+[![bpmn2neo](https://img.shields.io/badge/bpmn2neo-0.2.4-green.svg)](https://github.com/alciakng/bpmn2neo)
 
 ---
 
@@ -21,7 +21,7 @@
 ### Key Capabilities
 
 - **Upload & Index**: Ingest `.bpmn` files into Neo4j with automatic vector embeddings
-- **Semantic Search**: Find relevant processes using hybrid retrieval (cosine similarity + context aggregation)
+- **Semantic Search**: Find relevant processes using hybrid retrieval (cosine similarity + minimum threshold filtering)
 - **Natural Language Q&A**: Ask questions in Korean or English about your processes
 - **Process Comparison**: Compare uploaded model vs existing models for gap analysis
 - **Improvement Recommendations**: Get concrete, KPI-driven suggestions for process optimization
@@ -32,40 +32,43 @@
 ## Architecture
 
 ```
-┌─────────────┐
-│ Streamlit   │  User uploads BPMN + asks questions
-│     UI      │
-└──────┬──────┘
-       │
-       ▼
-┌──────────────────────────────────────────────┐
-│           GraphQueryAgent                    │
-│  ┌──────────────┐  ┌─────────────────────┐   │
-│  │   Ingest     │  │  Q&A Pipeline       │   │
-│  │              │  │                     │   │
-│  │ bpmn2neo     │  │ QueryInterpreter    │   │
-│  │ • Parse      │  │ • Embed query       │   │
-│  │ • Load       │  │ • Hybrid search     │   │
-│  │ • Embed      │  │ • Re-rank           │   │
-│  │              │  │                     │   │
-│  │              │  │ ContextComposer     │   │
-│  │              │  │ • Fetch context     │   │
-│  │              │  │ • Build payload     │   │
-│  │              │  │                     │   │
-│  │              │  │ LLM (GPT-4o)        │   │
-│  │              │  │ • Generate answer   │   │
-│  │              │  │ • Recommend fixes   │   │
-│  └──────────────┘  └─────────────────────┘   │
-└──────────────────────────────────────────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-              │   Neo4j Graph   │
-              │                 │
-              │ • BPMN nodes    │
-              │ • Embeddings    │
-              │ • Relationships │
-              └─────────────────┘
+        ┌─────────────┐
+        │ Streamlit   │  User uploads BPMN + asks questions
+        │     UI      │
+        └──────┬──────┘
+               │
+               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    GraphQueryAgent                          │
+│                                                             │
+│  ┌──────────────┐                ┌─────────────────────┐    │
+│  │   Ingest     │                │   Q&A Pipeline      │    │
+│  │              │                │                     │    │
+│  │  bpmn2neo    │                │  QueryInterpreter   │    │
+│  │  • Parse     │                │  • Embed query      │    │
+│  │  • Load      │                │  • Search           │    │
+│  │  • Embed     │                │  • Re-rank          │    │
+│  │              │                │                     │    │
+│  └──────┬───────┘                │  ContextComposer    │    │
+│         │                        │  • Fetch context    │    │
+│         │                        │  • Model flows      │    │
+│         │                        │  • Build payload    │    │
+│         │                        └──────────┬──────────┘    │
+│         │                                   │               │
+│         ▼                                   ▼               │
+│  ┌──────────────┐                  ┌─────────────────┐      │
+│  │  Neo4j       │◄─────Retrieval───│  LLM (GPT-4.1)  │      │
+│  │  Graph       │                  │  • Analyze      │      │
+│  │              │                  │  • Answer       │      │
+│  │ • BPMN nodes │                  │  • Recommend    │      │
+│  │ • Embeddings │                  └────────┬────────┘      │
+│  │ • Flows      │                           │               │
+│  └──────────────┘                           │               │
+└─────────────────────────────────────────────┼───────────────┘
+                                              ▼
+                                       ┌─────────────┐
+                                       │   Answer    │
+                                       └─────────────┘
 ```
 
 ### Core Components
@@ -73,9 +76,9 @@
 | Component | Purpose |
 |-----------|---------|
 | **GraphQueryAgent** | Orchestrates end-to-end workflow: ingestion → retrieval → answering |
-| **QueryInterpreter** | Embeds queries, performs hybrid search, re-ranks by cosine similarity |
-| **ContextComposer** | Fetches hierarchical BPMN context (Model → Participant → Process → Lane → FlowNode) |
-| **Reader** | Neo4j access layer with Cypher queries for retrieval and context fetching |
+| **QueryInterpreter** | Embeds queries, performs hybrid search with cosine similarity, re-ranks by score |
+| **ContextComposer** | Fetches hierarchical BPMN context (Model → Participant → Process → Lane → FlowNode) and 4-hop model flows |
+| **Reader** | Neo4j access layer with Cypher queries for retrieval and context fetching with minimum similarity threshold |
 | **UI Components** | Streamlit-based chat interface, BPMN uploader, and interactive graph visualization |
 
 ---
@@ -86,7 +89,7 @@
 
 - **Python** 3.10+
 - **Neo4j** 6.0+ (with GDS library for cosine similarity)
-- **OpenAI API Key** (for embeddings and GPT-4o)
+- **OpenAI API Key** (for embeddings and GPT-4.1)
 
 ### Setup
 
@@ -111,6 +114,9 @@
 
    OPENAI_API_KEY = "sk-..."
 
+   # Optional: Redis for session management
+   REDIS_URL = "redis://localhost:6379"
+
    # Optional: AWS S3 for image storage
    AWS_ACCESS_KEY_ID = "..."
    AWS_SECRET_ACCESS_KEY = "..."
@@ -129,18 +135,18 @@
 
 ### 1. Upload BPMN Models
 
-- Navigate to **BPMN Loader** page
+- Navigate to **BPMN 적재** (BPMN Loader) page
 - Upload `.bpmn` file (optionally with process image)
 - Click **적재하기** (Ingest)
 - Model is parsed, loaded into Neo4j, and embedded using `bpmn2neo`
 
 ### 2. Ask Questions
 
-- Go to **Chat** page
+- Go to **프로세스 분석** (Process Analysis) page
 - Type natural language queries:
-  - Where are the bottlenecks?
-  - How many lane handoffs occur?
-  - How do data objects flow?
+  - Can you explain the social insurance premium calculation process in the payroll payment process?
+  - What are the improvements for this process?
+  - Can you write the improvements for this process as BPMN XML code?
 
 ### 3. Compare Processes
 
@@ -152,6 +158,8 @@
 ### 4. Get Recommendations
 
 The agent generates:
+- **Process Overview**: General explanation of the process with context
+- **Process Flow Diagram**: Visual representation with predecessor/successor models
 - **Problem Diagnosis Table**: Issues, evidence (node IDs), severity, solutions
 - **Improvements & Effects Table**: Actions, KPIs, baseline → target, expected delta (%)
 - **Risk & Recommendations**: Actionable mitigations with process-specific context
@@ -162,26 +170,30 @@ The agent generates:
 
 ### Hybrid Retrieval Pipeline
 
-1. **Query Embedding**: Encode user query with OpenAI `text-embedding-3-small`
+1. **Query Embedding**: Encode user query with OpenAI `text-embedding-3-large`
 2. **Cosine Search**: Retrieve top-N FlowNodes using `gds.similarity.cosine`
-3. **Context Aggregation**: Group by model, aggregate scores from child nodes
-4. **Re-ranking**: Select top-K models with highest cumulative scores
+3. **Minimum Similarity Filtering**: Filter results by minimum cosine similarity threshold (default: 0.3)
+4. **Context Aggregation**: Group by model, aggregate scores from child nodes
+5. **Re-ranking**: Select top-K models with highest cumulative scores
 
 ### LLM Prompt Engineering
 
-- **System Prompt**: Configures GPT-4o as "BPMN/Neo4j Graph-RAG expert + Process Innovation Consultant"
-- **Payload Schema**: Structured JSON with model/participant/process/lane/node hierarchy
+- **System Prompt**: Configures GPT-4.1 as "BPMN/Neo4j Graph-RAG expert + Process Innovation Consultant"
+- **Payload Schema**: Structured JSON with model/participant/process/lane/node hierarchy and model_flows
+- **Model Flows**: 4-hop predecessor/successor process chains for context understanding
 - **Chat History**: Maintains last 3 turns for continuity
 - **Style Rules**:
   - Korean output with numbered sections, bullet points, tables
   - Inline code for domain terms (e.g., `Bank Branch (Front Office)`, `Underwriter`)
   - Pure Markdown (no HTML)
+  - Process Flow Diagrams with arrows and role explanations
 
 ### Graph Visualization
 
 - **Interactive Graph**: Streamlit-Agraph for node/edge rendering
 - **Multi-Model Support**: Slider to select/compare multiple loaded models
-- **Hierarchical Layout**: Process → Lane → FlowNode structure preserved
+- **Hierarchical Layout**: Category → Model → Process → Lane → FlowNode structure preserved
+- **Category Tree Viewer**: Hierarchical category and model navigation
 
 ---
 
@@ -190,36 +202,44 @@ The agent generates:
 ```
 BPMN-RAG/
 ├── agent/
-│   ├── graph_query_agent.py    # Main orchestrator (ingest, derive, answer)
-│   ├── query_interpreter.py    # Query embedding + hybrid search + re-ranking
-│   └── context_composer.py     # Fetch hierarchical context from Neo4j
+│   ├── graph_query_agent.py      # Main orchestrator (ingest, derive, answer)
+│   ├── query_interpreter.py      # Query embedding + hybrid search + re-ranking
+│   └── context_composer.py       # Fetch hierarchical context from Neo4j
 ├── manager/
-│   ├── reader.py                # Neo4j Cypher queries (search, fetch)
-│   ├── session_store.py         # Session state management
-│   └── util.py                  # Utility functions
+│   ├── reader.py                  # Neo4j Cypher queries (search, fetch, model flows)
+│   ├── session_store.py           # Session/analysis state management (Redis/memory)
+│   ├── vector_store.py            # FAISS vector store for embeddings
+│   └── util.py                    # Utility functions
 ├── ui/
 │   ├── app/
-│   │   ├── init.py              # App initialization (agent, session)
-│   │   └── handler.py           # Business logic handlers
+│   │   ├── init.py                # App initialization (agent, session, stores)
+│   │   └── handler.py             # Business logic handlers
 │   ├── component/
-│   │   ├── chat.py              # Chat interface
-│   │   ├── uploader.py          # BPMN/image uploader
-│   │   ├── agraph.py            # Graph visualization
-│   │   ├── panels.py            # Candidate selector panel
-│   │   └── layout.py            # App layout structure
+│   │   ├── chat.py                # Chat interface with history
+│   │   ├── chat_input_module.py   # Chat input component
+│   │   ├── uploader.py            # BPMN/image uploader with category selection
+│   │   ├── agraph.py              # Interactive graph visualization
+│   │   ├── category_viewer.py     # Category tree navigation
+│   │   ├── panels.py              # Model selection sidebar panel
+│   │   ├── intro.py               # Introduction page
+│   │   ├── layout.py              # App layout structure with sidebar menu
+│   │   └── common/
+│   │       └── tree_viewer.py     # Hierarchical tree component
 │   └── common/
-│       ├── utils.py             # UI utilities
-│       └── log_viewer.py        # Live log streaming
+│       ├── utils.py               # UI utilities
+│       ├── analytics.py           # Analytics tracking
+│       └── log_viewer.py          # Live log streaming
 ├── common/
-│   ├── settings.py              # Configuration (Neo4j, OpenAI)
-│   ├── neo4j_repo.py            # Neo4j client wrapper
-│   ├── llm_client.py            # LLM client (OpenAI)
-│   └── logger.py                # Structured logging
+│   ├── settings.py                # Configuration (Neo4j, OpenAI)
+│   ├── neo4j_repo.py              # Neo4j client wrapper
+│   ├── llm_client.py              # LLM client (OpenAI)
+│   ├── logger.py                  # Structured logging
+│   └── util.py                    # Common utilities
 ├── .streamlit/
-│   ├── config.toml              # Streamlit config
-│   └── secrets.toml             # Secrets (not in repo)
-├── main.py                      # Streamlit entry point
-└── requirements.txt             # Python dependencies
+│   ├── config.toml                # Streamlit config
+│   └── secrets.toml               # Secrets (not in repo)
+├── main.py                        # Streamlit entry point
+└── requirements.txt               # Python dependencies
 ```
 
 ---
@@ -228,57 +248,17 @@ BPMN-RAG/
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| `bpmn2neo` | 0.1.9 | BPMN parsing, Neo4j loading, embedding |
+| `bpmn2neo` | 0.2.4 | BPMN parsing, Neo4j loading, embedding with NEXT_PROCESS support |
 | `streamlit` | 1.50.0 | Web UI framework |
-| `neo4j` | 6.0.2 | Graph database driver |
-| `openai` | 2.6.1 | LLM + embedding API |
+| `streamlit-option-menu` | 0.4.0 | Sidebar navigation menu |
 | `streamlit-agraph` | 0.0.45 | Interactive graph visualization |
-| `redis` | 7.0.0 | Session caching (optional) |
+| `streamlit-extras` | 0.5.1 | Additional UI components |
+| `neo4j` | 6.0.2 | Graph database driver |
+| `openai` | 2.6.1 | LLM + embedding API (GPT-4.1, text-embedding-3-large) |
+| `redis` | 7.0.0 | Session caching and state management |
+| `faiss-cpu` | 1.9.0.post1 | Vector similarity search |
 | `boto3` | 1.40.23 | AWS S3 for image storage (optional) |
-
----
-
-## Neo4j Setup
-
-### Required Indexes
-
-```cypher
-// Fulltext index for keyword search
-CREATE FULLTEXT INDEX nodeTextIndex IF NOT EXISTS
-FOR (n:Activity|Event|Gateway)
-ON EACH [n.name, n.summary_text, n.full_text];
-
-// Node key constraints (created by bpmn2neo)
-CREATE CONSTRAINT IF NOT EXISTS FOR (n:BPMNModel) REQUIRE (n.id, n.modelKey) IS NODE KEY;
-CREATE CONSTRAINT IF NOT EXISTS FOR (n:Process) REQUIRE (n.id, n.modelKey) IS NODE KEY;
-CREATE CONSTRAINT IF NOT EXISTS FOR (n:Lane) REQUIRE (n.id, n.modelKey) IS NODE KEY;
-CREATE CONSTRAINT IF NOT EXISTS FOR (n:Activity) REQUIRE (n.id, n.modelKey) IS NODE KEY;
-CREATE CONSTRAINT IF NOT EXISTS FOR (n:Event) REQUIRE (n.id, n.modelKey) IS NODE KEY;
-CREATE CONSTRAINT IF NOT EXISTS FOR (n:Gateway) REQUIRE (n.id, n.modelKey) IS NODE KEY;
-```
-
-### Required GDS Library
-
-Ensure Neo4j Graph Data Science library is installed for `gds.similarity.cosine()`:
-- [Neo4j GDS Installation Guide](https://neo4j.com/docs/graph-data-science/current/installation/)
-
----
-
-## Example Queries
-
-### Process Analysis
-- What are the main steps?
-- Identify bottleneck points
-- How are data objects used?
-
-### Comparison & Improvement
-- Suggest improvements for uploaded model
-- What are differences vs existing models?
-- How to reduce lead time?
-
-### Risk & Compliance
-- What are compliance risks?
-- Are there missing approval steps?
+| `pytz` | 2024.2 | Timezone utilities |
 
 ---
 
@@ -286,12 +266,12 @@ Ensure Neo4j Graph Data Science library is installed for `gds.similarity.cosine(
 
 ### Embedding Settings
 
-Adjust in `common/settings.py`:
+Adjust in [common/settings.py](common/settings.py):
 ```python
 @dataclass
 class OpenAIConfig:
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536  # or 3072 for -large
+    embedding_model: str = "text-embedding-3-large"
+    embedding_dimension: int = 3072
     translation_model: str = "gpt-4o-mini"
     temperature: float = 0.2
     max_tokens_full: int = 600
@@ -299,14 +279,29 @@ class OpenAIConfig:
 
 ### Retrieval Tuning
 
-Adjust in `agent/query_interpreter.py`:
+Adjust in [agent/query_interpreter.py](agent/query_interpreter.py):
 ```python
 top_k_nodes_per_model: int = 10   # Top-K nodes per model
 top_n_models: int = 100           # Top-N models to return
 wc: float = 0.45                  # Cosine weight
-wb: float = 0.40                  # BM25 weight
-wd: float = 0.15                  # Data I/O weight
+wb: float = 0.40                  # BM25 weight (if using hybrid search)
+wd: float = 0.15                  # Data I/O weight (if using hybrid search)
 ```
+
+### Minimum Similarity Threshold
+
+Adjust in [manager/reader.py](manager/reader.py):
+```python
+def search_candidates(
+    self,
+    user_query: str,
+    qemb: Optional[List[float]],
+    limit: int = 200,
+    min_similarity: float = 0.3  # Adjust threshold (0.0 ~ 1.0)
+):
+```
+
+Higher values (e.g., 0.5) return only highly relevant results, while lower values (e.g., 0.2) allow more diverse candidates.
 
 ---
 
@@ -326,31 +321,12 @@ wd: float = 0.15                  # Data I/O weight
 - Ensure BPMN models have been embedded (`mode='light'` or `mode='all'`)
 - Check `context_vector` property exists on FlowNodes
 - Verify GDS library is installed for cosine similarity
+- Lower `min_similarity` threshold if results are too restrictive
 
 ### Graph Visualization Issues
 - Reduce number of nodes if graph is too large
 - Check Neo4j query returns valid node/relationship data
 - Clear browser cache if layout is broken
-
----
-
-## Performance
-
-### Typical Processing Times
-
-| Operation | Time | Notes |
-|-----------|------|-------|
-| BPMN Ingestion | 10-30s | Depends on model size |
-| Embedding (light mode) | 5-15s | FlowNodes only |
-| Embedding (full mode) | 30-60s | All hierarchy levels |
-| Query + Retrieval | 1-3s | Top-200 candidates |
-| LLM Answer Generation | 5-15s | GPT-4o completion |
-
-### Cost Estimates
-
-- **Embedding**: ~$0.0001 per 1K tokens (text-embedding-3-small)
-- **LLM**: ~$0.015 per 1K tokens (gpt-4o input/output combined)
-- **Typical Query**: ~$0.05-0.20 per complete Q&A cycle
 
 ---
 

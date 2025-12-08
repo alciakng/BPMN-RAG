@@ -189,26 +189,98 @@ class Reader:
             return {}
 
         # ---------------------------
-        # 0) Fetch model meta
+        # 0) Fetch model meta with process flow chains (4-hop structure)
         # ---------------------------
         try:
             q_model = """
             MATCH (m:BPMNModel {modelKey:$mk})
+
+            // Collect predecessors by hop level (multiple models per hop)
+            OPTIONAL MATCH (prev1:BPMNModel)-[:NEXT_PROCESS]->(m)
+            WITH m, collect(DISTINCT {id: prev1.id, name: prev1.name, modelKey: prev1.modelKey}) AS prev_hop1
+
+            OPTIONAL MATCH (prev2:BPMNModel)-[:NEXT_PROCESS]->(prev1_step:BPMNModel)-[:NEXT_PROCESS]->(m)
+            WITH m, prev_hop1, collect(DISTINCT {id: prev2.id, name: prev2.name, modelKey: prev2.modelKey}) AS prev_hop2
+
+            OPTIONAL MATCH (prev3:BPMNModel)-[:NEXT_PROCESS]->(prev2_step:BPMNModel)-[:NEXT_PROCESS]->(prev1_step:BPMNModel)-[:NEXT_PROCESS]->(m)
+            WITH m, prev_hop1, prev_hop2, collect(DISTINCT {id: prev3.id, name: prev3.name, modelKey: prev3.modelKey}) AS prev_hop3
+
+            OPTIONAL MATCH (prev4:BPMNModel)-[:NEXT_PROCESS]->(prev3_step:BPMNModel)-[:NEXT_PROCESS]->(prev2_step:BPMNModel)-[:NEXT_PROCESS]->(prev1_step:BPMNModel)-[:NEXT_PROCESS]->(m)
+            WITH m, prev_hop1, prev_hop2, prev_hop3, collect(DISTINCT {id: prev4.id, name: prev4.name, modelKey: prev4.modelKey}) AS prev_hop4
+
+            // Collect successors by hop level (multiple models per hop)
+            OPTIONAL MATCH (m)-[:NEXT_PROCESS]->(next1:BPMNModel)
+            WITH m, prev_hop1, prev_hop2, prev_hop3, prev_hop4, collect(DISTINCT {id: next1.id, name: next1.name, modelKey: next1.modelKey}) AS next_hop1
+
+            OPTIONAL MATCH (m)-[:NEXT_PROCESS]->(next1_step:BPMNModel)-[:NEXT_PROCESS]->(next2:BPMNModel)
+            WITH m, prev_hop1, prev_hop2, prev_hop3, prev_hop4, next_hop1, collect(DISTINCT {id: next2.id, name: next2.name, modelKey: next2.modelKey}) AS next_hop2
+
+            OPTIONAL MATCH (m)-[:NEXT_PROCESS]->(next1_step:BPMNModel)-[:NEXT_PROCESS]->(next2_step:BPMNModel)-[:NEXT_PROCESS]->(next3:BPMNModel)
+            WITH m, prev_hop1, prev_hop2, prev_hop3, prev_hop4, next_hop1, next_hop2, collect(DISTINCT {id: next3.id, name: next3.name, modelKey: next3.modelKey}) AS next_hop3
+
+            OPTIONAL MATCH (m)-[:NEXT_PROCESS]->(next1_step:BPMNModel)-[:NEXT_PROCESS]->(next2_step:BPMNModel)-[:NEXT_PROCESS]->(next3_step:BPMNModel)-[:NEXT_PROCESS]->(next4:BPMNModel)
+            WITH m, prev_hop1, prev_hop2, prev_hop3, prev_hop4, next_hop1, next_hop2, next_hop3, collect(DISTINCT {id: next4.id, name: next4.name, modelKey: next4.modelKey}) AS next_hop4
+
+            // Fetch parent category
+            OPTIONAL MATCH (cat:Category)-[:CONTAINS_MODEL]->(m)
+
             RETURN m.id AS id,
                 coalesce(m.name,'BPMNModel '+toString(m.id)) AS name,
-                m.modelKey AS modelKey
+                m.modelKey AS modelKey,
+                [p IN prev_hop4 WHERE p.id IS NOT NULL] AS prev_hop4,
+                [p IN prev_hop3 WHERE p.id IS NOT NULL] AS prev_hop3,
+                [p IN prev_hop2 WHERE p.id IS NOT NULL] AS prev_hop2,
+                [p IN prev_hop1 WHERE p.id IS NOT NULL] AS prev_hop1,
+                [n IN next_hop1 WHERE n.id IS NOT NULL] AS next_hop1,
+                [n IN next_hop2 WHERE n.id IS NOT NULL] AS next_hop2,
+                [n IN next_hop3 WHERE n.id IS NOT NULL] AS next_hop3,
+                [n IN next_hop4 WHERE n.id IS NOT NULL] AS next_hop4,
+                CASE WHEN cat IS NOT NULL
+                     THEN {id: cat.id, name: cat.name, modelKey: cat.modelKey}
+                     ELSE null
+                END AS parent_category
             """
             rows_model = self.repository.execute_single_query(q_model, {"mk": model_key}) or []
             if not rows_model:
                 logger.warning("[UPLOAD_CTX] no model for key=%s", model_key)
                 return {}
             mrow = rows_model[0]
+
+            # Build model_flows structure
+            model_flows = {
+                "predecessors": {
+                    "hop4": mrow.get("prev_hop4", []),
+                    "hop3": mrow.get("prev_hop3", []),
+                    "hop2": mrow.get("prev_hop2", []),
+                    "hop1": mrow.get("prev_hop1", [])
+                },
+                "successors": {
+                    "hop1": mrow.get("next_hop1", []),
+                    "hop2": mrow.get("next_hop2", []),
+                    "hop3": mrow.get("next_hop3", []),
+                    "hop4": mrow.get("next_hop4", [])
+                }
+            }
+
             out["model"] = {
                 "id": mrow.get("id"),
                 "name": mrow.get("name"),
                 "modelKey": mrow.get("modelKey"),
+                "model_flows": model_flows,
+                "parent_category": mrow.get("parent_category")
             }
-            logger.info("[UPLOAD_CTX] model fetched id=%s", out["model"]["id"])
+
+            # Count total predecessors and successors for logging
+            total_pred = sum(len(model_flows["predecessors"][f"hop{i}"]) for i in range(1, 5))
+            total_succ = sum(len(model_flows["successors"][f"hop{i}"]) for i in range(1, 5))
+
+            logger.info(
+                "[UPLOAD_CTX] model fetched id=%s predecessors=%d successors=%d category=%s",
+                out["model"]["id"],
+                total_pred,
+                total_succ,
+                out["model"]["parent_category"]["name"] if out["model"]["parent_category"] else "None"
+            )
         except Exception:
             logger.exception("[UPLOAD_CTX][ERROR] model query failed")
             return {}
