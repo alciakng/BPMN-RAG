@@ -10,6 +10,7 @@ import streamlit as st
 from manager.session_store import SessionStore
 from manager.vector_store import FaissStore
 from manager.reader import Reader
+from manager.web_search_knowledge_store import WebSearchKnowledgeStore
 from agent.query_interpreter import QueryInterpreter
 from agent.context_composer import ContextComposer
 from agent.graph_query_agent import GraphQueryAgent
@@ -89,7 +90,11 @@ def init_app() -> Dict[str, Optional[Any]]:
         # LLM Client
         if "llm_client" not in st.session_state:
             open_api_key = st.secrets["OPENAI_API_KEY"]
-            st.session_state.llm_client = LLMClient(open_api_key)
+            anthropic_api_key = st.secrets.get("ANTHROPIC_API_KEY")
+            st.session_state.llm_client = LLMClient(
+                openai_api_key=open_api_key,
+                anthropic_api_key=anthropic_api_key
+            )
         llm = st.session_state.llm_client
 
         # Set LLM client for vector store (for embeddings)
@@ -97,12 +102,33 @@ def init_app() -> Dict[str, Optional[Any]]:
 
         # Interpreter & Composer
         if "interpreter" not in st.session_state:
-            st.session_state.interpreter = QueryInterpreter(llm_client=llm, reader=reader, logger=logger)
+            st.session_state.interpreter = QueryInterpreter(llm_client=llm, reader=reader, logger=logger, top_n_models=5)
         interpreter = st.session_state.interpreter
 
         if "composer" not in st.session_state:
             st.session_state.composer = ContextComposer(reader=reader)
         composer = st.session_state.composer
+
+        # External Knowledge Store (Tavily-based Web Search)
+        if "knowledge_store" not in st.session_state:
+            try:
+                # Get Tavily API key from secrets
+                tavily_api_key = st.secrets.get("TAVILY_API_KEY")
+
+                if tavily_api_key:
+                    st.session_state.knowledge_store = WebSearchKnowledgeStore(
+                        tavily_api_key=tavily_api_key,
+                        llm_client=llm
+                    )
+                    logger.info("[INIT] WebSearchKnowledgeStore initialized with Tavily API")
+                else:
+                    st.session_state.knowledge_store = None
+                    logger.warning("[INIT] TAVILY_API_KEY not found in secrets, 2-Stage Agent will run in Stage-1 only mode")
+            except Exception as e:
+                logger.exception("[INIT] Failed to initialize WebSearchKnowledgeStore: %s", e)
+                st.session_state.knowledge_store = None
+
+        knowledge_store = st.session_state.knowledge_store
 
         # Agent
         if "agent" not in st.session_state:
@@ -111,6 +137,8 @@ def init_app() -> Dict[str, Optional[Any]]:
                 reader=reader,
                 context_composer=composer,
                 interpreter=interpreter,
+                knowledge_store=knowledge_store,  # Pass knowledge store
+                enable_2stage=True,  # Enable 2-Stage Agent
             )
         agent = st.session_state.agent
 

@@ -79,7 +79,7 @@ class SessionStore:
         self.redis = None
         try:
             import redis  # type: ignore
-            url = st.secrets.get('REDIS_URL', None)
+            url = st.secrets['REDIS_URL']
             if url:
                 self.redis = redis.Redis.from_url(url, decode_responses=True)
             else:
