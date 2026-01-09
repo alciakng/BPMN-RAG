@@ -19,6 +19,7 @@ class Reader:
 
     def __init__(self, neo4j_config: Neo4jConfig,):
         try:
+            LOGGER.warning("[FETCH][INIT] Injected repository invalid; falling back to Neo4jRepository(neo4j_config).")
             self.repository = Neo4jRepository(neo4j_config)
             LOGGER.info("[FETCH][INIT] Repository created from neo4j_config.")
 
@@ -221,12 +222,13 @@ class Reader:
             OPTIONAL MATCH (m)-[:NEXT_PROCESS]->(next1_step:BPMNModel)-[:NEXT_PROCESS]->(next2_step:BPMNModel)-[:NEXT_PROCESS]->(next3_step:BPMNModel)-[:NEXT_PROCESS]->(next4:BPMNModel)
             WITH m, prev_hop1, prev_hop2, prev_hop3, prev_hop4, next_hop1, next_hop2, next_hop3, collect(DISTINCT {id: next4.id, name: next4.name, modelKey: next4.modelKey}) AS next_hop4
 
-            // Fetch parent category
-            OPTIONAL MATCH (cat:Category)-[:CONTAINS_MODEL]->(m)
+            // Fetch parent category hierarchy (2 levels: parent and grandparent)
+            OPTIONAL MATCH (parent_cat:Category)-[:HAS_SUBCATEGORY]->(child_cat:Category)-[:CONTAINS_MODEL]->(m)
 
             RETURN m.id AS id,
                 coalesce(m.name,'BPMNModel '+toString(m.id)) AS name,
                 m.modelKey AS modelKey,
+                m.full_context AS full_context,
                 [p IN prev_hop4 WHERE p.id IS NOT NULL] AS prev_hop4,
                 [p IN prev_hop3 WHERE p.id IS NOT NULL] AS prev_hop3,
                 [p IN prev_hop2 WHERE p.id IS NOT NULL] AS prev_hop2,
@@ -235,9 +237,15 @@ class Reader:
                 [n IN next_hop2 WHERE n.id IS NOT NULL] AS next_hop2,
                 [n IN next_hop3 WHERE n.id IS NOT NULL] AS next_hop3,
                 [n IN next_hop4 WHERE n.id IS NOT NULL] AS next_hop4,
-                CASE WHEN cat IS NOT NULL
-                     THEN {id: cat.id, name: cat.name, modelKey: cat.modelKey}
-                     ELSE null
+                CASE
+                    WHEN parent_cat IS NOT NULL AND child_cat IS NOT NULL THEN [
+                        {id: parent_cat.id, name: parent_cat.name, modelKey: parent_cat.modelKey},
+                        {id: child_cat.id, name: child_cat.name, modelKey: child_cat.modelKey}
+                    ]
+                    WHEN child_cat IS NOT NULL THEN [
+                        {id: child_cat.id, name: child_cat.name, modelKey: child_cat.modelKey}
+                    ]
+                    ELSE []
                 END AS parent_category
             """
             rows_model = self.repository.execute_single_query(q_model, {"mk": model_key}) or []
@@ -266,6 +274,7 @@ class Reader:
                 "id": mrow.get("id"),
                 "name": mrow.get("name"),
                 "modelKey": mrow.get("modelKey"),
+                "full_context": mrow.get("full_context"),
                 "model_flows": model_flows,
                 "parent_category": mrow.get("parent_category")
             }
@@ -274,12 +283,15 @@ class Reader:
             total_pred = sum(len(model_flows["predecessors"][f"hop{i}"]) for i in range(1, 5))
             total_succ = sum(len(model_flows["successors"][f"hop{i}"]) for i in range(1, 5))
 
+            # Get category names for logging (join all parent categories)
+            category_names = " > ".join([cat["name"] for cat in out["model"]["parent_category"]]) if out["model"]["parent_category"] else "None"
+
             logger.info(
                 "[UPLOAD_CTX] model fetched id=%s predecessors=%d successors=%d category=%s",
                 out["model"]["id"],
                 total_pred,
                 total_succ,
-                out["model"]["parent_category"]["name"] if out["model"]["parent_category"] else "None"
+                category_names
             )
         except Exception:
             logger.exception("[UPLOAD_CTX][ERROR] model query failed")
@@ -295,6 +307,7 @@ class Reader:
             WITH pt, collect(pr) AS prs
             RETURN pt.id AS pid,
                 coalesce(pt.name,'Participant '+toString(pt.id)) AS pname,
+                pt.full_context AS full_context,
                 [p IN prs WHERE p IS NOT NULL |
                     { id: p.id, name: p.name}
                 ] AS processes
@@ -313,10 +326,10 @@ class Reader:
             try:
                 q = """
                 MATCH (pr:Process {id:$pid, modelKey:$modelKey})-[:HAS_LANE]->(l:Lane)
-                RETURN l.id AS id, coalesce(l.name,'Lane '+toString(l.id)) AS name
+                RETURN l.id AS id, coalesce(l.name,'Lane '+toString(l.id)) AS name, l.full_context AS full_context
                 """
                 rows = self.repository.execute_single_query(q, {"pid": pid, "modelKey":model_key}) or []
-                return [{"id": r.get("id"), "name": r.get("name"), "properties": dict(r.get("props") or {})} for r in rows]
+                return [{"id": r.get("id"), "name": r.get("name"), "full_context": r.get("full_context"), "properties": dict(r.get("props") or {})} for r in rows]
             except Exception:
                 logger.exception("[UPLOAD_CTX][ERROR] lanes query failed pid=%s", pid)
                 return []
@@ -366,7 +379,7 @@ class Reader:
                 try:
                     q_meta = """
                     MATCH (pr:Process) WHERE pr.id=$pid and pr.modelKey=$modelKey
-                    RETURN pr.id AS id, coalesce(pr.name,'Process '+toString(pr.id)) AS name, pr.modelKey AS modelKey
+                    RETURN pr.id AS id, coalesce(pr.name,'Process '+toString(pr.id)) AS name, pr.modelKey AS modelKey, pr.full_context AS full_context
                     """
                     meta_rows = self.repository.execute_single_query(q_meta, {"pid": pid, "modelKey": model_key}) or []
                     meta = dict(meta_rows[0]) if meta_rows else {}
@@ -423,6 +436,7 @@ class Reader:
                         RETURN a.id AS id, 'Activity' AS kind,
                             coalesce(a.name,'Activity '+toString(a.id)) AS name,
                             a.activityType AS activityType,
+                            a.full_context AS full_context,
                             null AS position, null AS detailType,
                             null AS gatewayDirection, null AS gatewayDefault,
                             l.id AS ownerLaneId, coalesce(pr.id, null) AS ownerProcessId
@@ -434,6 +448,7 @@ class Reader:
                         RETURN e.id AS id, 'Event' AS kind,
                             coalesce(e.name,'Event '+toString(e.id)) AS name,
                             null AS activityType,
+                            e.full_context AS full_context,
                             coalesce(e.position,'') AS position,
                             coalesce(e.detailType,'') AS detailType,
                             null AS gatewayDirection, null AS gatewayDefault,
@@ -446,6 +461,7 @@ class Reader:
                         RETURN g.id AS id, 'Gateway' AS kind,
                             coalesce(g.name,'Gateway '+toString(g.id)) AS name,
                             null AS activityType,
+                            g.full_context AS full_context,
                             null AS position, null AS detailType,
                             coalesce(g.gatewayDirection,'') AS gatewayDirection,
                             coalesce(g.default,'') AS gatewayDefault,
@@ -657,6 +673,7 @@ class Reader:
                 ctx = {
                     "id": meta['id'],
                     "name":meta['name'],
+                    "full_context": meta.get('full_context'),
                     "lanes": lanes,
                     "nodes_all": nodes_all,
                     "sequence_flows": seq_flows,
@@ -681,6 +698,7 @@ class Reader:
                 pt_obj = {
                     "id": r.get("pid"),
                     "name": r.get("pname"),
+                    "full_context": r.get("full_context"),
                     "processes": []
                 }
 
