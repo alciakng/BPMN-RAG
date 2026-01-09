@@ -19,7 +19,7 @@ class QueryInterpreter:
     """
     End-to-end interpreter with a single integrated retrieval path:
     - reader.search_hybrid_candidates(user_query, qemb, keywords, limit)
-    - Re-rank with Score = wc*cos + wb*bm25_norm + wd*d_io_norm
+    - Re-rank with Score = wc*cos 
     - Group to model-level top-K; return top-N models
     - Generate intent-aware prompt message (no label returned)
     """
