@@ -18,3 +18,6 @@ numpy>=1.24.0
 
 # Anthropic Claude API
 anthropic>=0.18.0
+
+# Tavily Web Search API (for 2-stage agent external knowledge)
+tavily-python>=0.3.0
